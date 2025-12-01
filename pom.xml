@@ -96,6 +96,10 @@
                         <exclude>**/README</exclude>
                         <exclude>src/test/resources/**</exclude>
                         <exclude>src/main/resources/**</exclude>
+                        <exclude>mvnw</exclude>
+                        <exclude>jadaptive.build.properties</exclude>
+                        <exclude>LICENSE</exclude>
+                        <exclude>.gitattributes</exclude>
                     </excludes>
                 </configuration>
                 <executions>
