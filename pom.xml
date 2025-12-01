@@ -177,7 +177,7 @@
                         <javadocExecutable>${java.home}/bin/javadoc</javadocExecutable>
                         <encoding>UTF-8</encoding>
                         <detectJavaApiLink>false</detectJavaApiLink>
-                        <source>11</source>
+                        <source>17</source>
                         <doclint>none</doclint>
                         <sourcepath>src/main/java</sourcepath>
                         <includeDependencySources>false</includeDependencySources>
