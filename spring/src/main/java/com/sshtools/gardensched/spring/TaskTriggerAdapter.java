@@ -17,7 +17,6 @@ package com.sshtools.gardensched.spring;
 
 import java.time.Instant;
 
-import org.jspecify.annotations.Nullable;
 import org.springframework.scheduling.Trigger;
 import org.springframework.scheduling.TriggerContext;
 
@@ -53,17 +52,17 @@ public final class TaskTriggerAdapter implements TaskTrigger {
 		return trigger.nextExecution(new TriggerContext() {
 			
 			@Override
-			public @Nullable Instant lastScheduledExecution() {
+			public Instant lastScheduledExecution() {
 				return context.lastScheduled();
 			}
 			
 			@Override
-			public @Nullable Instant lastCompletion() {
+			public Instant lastCompletion() {
 				return context.lastCompleted();
 			}
 			
 			@Override
-			public @Nullable Instant lastActualExecution() {
+			public Instant lastActualExecution() {
 				return context.lastExecuted();
 			}
 		});

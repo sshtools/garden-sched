@@ -17,7 +17,7 @@ package com.sshtools.gardensched.spring;
 
 import org.springframework.context.ApplicationContext;
 
-import com.sshtools.gardensched.TaskFilter;
+import com.sshtools.gardensched.TaskFilter; 
 
 public class SpringTaskFilter implements TaskFilter {
 	
