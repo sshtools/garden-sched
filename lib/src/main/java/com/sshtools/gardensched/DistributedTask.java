@@ -39,7 +39,7 @@ public interface DistributedTask<TASK extends Serializable> extends Streamable {
 		private Affinity affinity;
 		private String id;
 		private ConflictResolution onConflict;
-		private Set<String> classifiers;
+		private Set<String> classifiers = Collections.emptySet();
 		private Boolean persistent;
 		private String bundle;
 		private String name;
@@ -117,6 +117,9 @@ public interface DistributedTask<TASK extends Serializable> extends Streamable {
 			out.writeUTF(key);
 			out.writeUTF(bundle);
 			out.writeUTF(name);
+			out.writeInt(classifiers.size());
+			for(var c : classifiers)
+				out.writeUTF(c);
 		}
 
 		@Override
@@ -134,6 +137,12 @@ public interface DistributedTask<TASK extends Serializable> extends Streamable {
 			key = in.readUTF();
 			bundle = in.readUTF();
 			name = in.readUTF();
+			var c = in.readInt();
+			var s = new String[c];
+			for(var i = 0 ; i < c ; i++) {
+				s[i] = in.readUTF();
+			}
+			classifiers = Set.of(s);
 		}
 
 	}

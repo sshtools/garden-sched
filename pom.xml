@@ -22,7 +22,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.sshtools</groupId>
     <artifactId>garden-sched</artifactId>
-    <version>0.0.2</version>
+    <version>0.0.3-SNAPSHOT</version>
     <name>Garden Sched</name>
     <packaging>pom</packaging>
     <description>A distributed task scheduler based on JGroups. </description>

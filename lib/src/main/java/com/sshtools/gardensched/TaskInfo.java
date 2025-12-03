@@ -31,6 +31,7 @@ public final class TaskInfo {
 	Optional<String> bundle = Optional.empty();;
 	Optional<String> key = Optional.empty();
 	Optional<String[]> args = Optional.empty();
+	boolean active;
 	
 	TaskInfo(Instant lastScheduled, Future<?> future, TaskInfo previous) {
 		this.lastScheduled = lastScheduled;
@@ -62,6 +63,10 @@ public final class TaskInfo {
 		this.args = Optional.empty();
 	}
 	
+	public boolean active() {
+		return active;
+	}
+
 	public Optional<Long> maxProgress() {
 		return maxProgress;
 	}

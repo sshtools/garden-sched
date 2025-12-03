@@ -199,7 +199,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 	}
 
-	private abstract class AbstractHandler<TSK> implements Runnable {
+	private abstract class AbstractHandler<TSK extends DistributedTask<RESULT>, RESULT extends Serializable> implements Runnable {
 		final ClusterID id;
 		final TSK task;
 		final TaskSpec taskSpec;
@@ -212,8 +212,11 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 		@Override
 		public void run() {
+			TaskInfo tinfo;
 			synchronized(taskInfo) {
-				taskInfo.get(id).lastExecuted = Optional.of(Instant.now());
+				tinfo = taskInfo.get(id);
+				tinfo.lastExecuted = Optional.of(Instant.now());
+				tinfo.active = true;
 			}
 			
 			var retry = new AtomicLong(Integer.MIN_VALUE);
@@ -227,28 +230,28 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 						@Override
 						public void start(long max) {
 							queue.submit(() -> {
-								sendRequest(null, new Request(Type.START_PROGRESS, new StartProgressPayload(max)));
+								sendRequest(null, new Request(Type.START_PROGRESS, id, new StartProgressPayload(max)));
 							});
 						}
 						
 						@Override
 						public void progress(long value) {
 							queue.submit(() -> {
-								sendRequest(null, new Request(Type.PROGRESS, new ProgressPayload(value)));
+								sendRequest(null, new Request(Type.PROGRESS, id, new ProgressPayload(value)));
 							});
 						}
 						
 						@Override
 						public void message(String bundle, String key, String... args) {
 							queue.submit(() -> {
-								sendRequest(null, new Request(Type.PROGRESS_MESSAGE, new ProgressMessagePayload(bundle, key, args)));
+								sendRequest(null, new Request(Type.PROGRESS_MESSAGE, id, new ProgressMessagePayload(bundle, key, args)));
 							});
 						}
 						
 						@Override
 						public void message(String text) {
 							queue.submit(() -> {
-								sendRequest(null, new Request(Type.PROGRESS_MESSAGE, new ProgressMessagePayload(text)));
+								sendRequest(null, new Request(Type.PROGRESS_MESSAGE, id, new ProgressMessagePayload(text)));
 							});
 						}
 					};
@@ -290,9 +293,8 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			}
 			finally {
 				TaskContext.ctx.remove();
-				synchronized(taskInfo) {
-					taskInfo.get(id).lastCompleted = Optional.of(Instant.now());
-				}
+				tinfo.lastCompleted = Optional.of(Instant.now());
+				tinfo.active = false;
 				
 				if(cancel.get()) {
 					LOG.info("Cancelling {} because error handling requested it.", id);
@@ -323,20 +325,13 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				if(LOG.isDebugEnabled()) {
 					LOG.debug("Executing {}", id);
 				}
-				if(task instanceof Callable dcl)
-					result = dcl.call();
-				else if(task instanceof Runnable dcr) {
-					dcr.run();
-				}
-				else {
-					throw new IllegalArgumentException("Unknown task type.");
-				}
+				result = doRunTask();
 
 				synchronized(taskInfo) {
 					Optional.ofNullable(taskInfo.get(id)).ifPresent(ti -> ti.lastError = Optional.empty());
 				} 
 				taskSuccessHandler.ifPresent(te -> {
-					te.handleSuccess(id, taskSpec, (Serializable) task, taskCompletionContext);
+					te.handleSuccess(id, taskSpec, task, taskCompletionContext);
 				});
 			} catch (Throwable t) {
 				LOG.error("Failed executing {}", id, t);
@@ -347,10 +342,22 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				}
 				
 				taskErrorHandler.ifPresent(te -> {
-					te.handleError(id, taskSpec, (Serializable) task, taskCompletionContext, t);
+					te.handleError(id, taskSpec, task, taskCompletionContext, t);
 				});
 			}
 			return result;
+		}
+
+		protected Object doRunTask() throws Exception {
+			if(task instanceof Callable dcl)
+				return dcl.call();
+			else if(task instanceof Runnable dcr) {
+				dcr.run();
+			}
+			else {
+				throw new IllegalArgumentException("Unknown task type.");
+			}
+			return null;
 		}
 		
 		protected void noRetrigger() {
@@ -473,9 +480,9 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 	}
 	
-	private class LocalHandler<RESULT> extends AbstractHandler<Serializable> implements Runnable {
+	private class LocalHandler<RESULT extends Serializable> extends AbstractHandler<DistributedTask<RESULT>, RESULT> implements Runnable {
 
-		public LocalHandler(ClusterID id, Serializable task, TaskSpec taskSpec) {
+		public LocalHandler(ClusterID id, DistributedTask<RESULT> task, TaskSpec taskSpec) {
 			super(id, task, taskSpec);
 		}
 
@@ -488,13 +495,31 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		void retrigger() {
 			submitLocal(id, taskSpec, this);
 		}
+
+		@SuppressWarnings("unchecked")
+		@Override
+		protected Object doRunTask() throws Exception {
+			/* Bit hacky, but this is to save having to manually autowire
+			 * AFFINITY.LOCAL tasks 
+			 */
+			if(task instanceof DistributedCallable dcl)
+				return ((Callable<Object>)payloadFilter.filter(dcl.task())).call();
+			else if(task instanceof DistributedRunnable dcr) {
+				((Runnable)payloadFilter.filter(dcr.task())).run();
+			}
+			else {
+				throw new IllegalArgumentException("Unknown task type.");
+			}
+			return null;
+		}
 	}
 	
-	private class RemoteHandler  extends AbstractHandler<DistributedTask<?>> implements Runnable {
+	private class RemoteHandler  extends AbstractHandler<DistributedTask<Serializable>, Serializable> implements Runnable {
 		final TaskEntry entry;
 
+		@SuppressWarnings("unchecked")
 		public RemoteHandler(TaskEntry entry) {
-			super(entry.id, entry.task, entry.spec);
+			super(entry.id, (DistributedTask<Serializable>) entry.task(), entry.spec);
 			this.entry = entry;
 		}
 
@@ -614,7 +639,17 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 							}
 							entry.promise.setResult(((ResultPayload)req.payload()).result());
 
-							queue.execute(() -> removeRequest(req.id()));
+							if(entry.spec().schedule() == Schedule.TRIGGER) {
+								if (LOG.isDebugEnabled()) {
+									LOG.debug("Leaving task in place as it is not a TRIGGER and it has completed.", req.id());
+								}
+							}
+							else {
+								if (LOG.isDebugEnabled()) {
+									LOG.debug("Removing task as it is not a TRIGGER and it has completed.", req.id());
+								}
+								queue.execute(() -> removeRequest(req.id()));
+							}
 						} else {
 							if (LOG.isDebugEnabled()) {
 								LOG.debug("Waiting for {} more responses to {}.", responsesLeft, req.id());
@@ -1330,7 +1365,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			if(LOG.isDebugEnabled()) {
 				LOG.debug("Task {} is a LOCAL task for LOCAL people", id);
 			}
-			return submitLocal(id, spec, new LocalHandler<>(id, payloadFilter.filter(task.task()), spec));
+			return submitLocal(id, spec, new LocalHandler<>(id, task, spec));
 		}
 
 		try {
@@ -1338,7 +1373,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			try {
 
 				if (LOG.isDebugEnabled()) {
-					LOG.debug("Is a {}, submitting {} [{}] to cluster.", DistributedCallable.class.getName(), id, spec);
+					LOG.debug("Is a {}, submitting {} [{}] to cluster with classifiers `{}`.", DistributedCallable.class.getName(), id, spec, String.join(", ", task.classifiers()));
 				}
 				
 				var expectResults = task.affinity() == Affinity.ALL ? clusterSize : 1;

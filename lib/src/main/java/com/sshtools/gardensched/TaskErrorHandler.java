@@ -15,9 +15,7 @@
  */
 package com.sshtools.gardensched;
 
-import java.io.Serializable;
-
 public interface TaskErrorHandler {
 
-	void handleError(ClusterID id, TaskSpec spec, Serializable task, TaskCompletionContext context, Throwable exception);
+	void handleError(ClusterID id, TaskSpec spec, DistributedTask<?> task, TaskCompletionContext context, Throwable exception);
 }

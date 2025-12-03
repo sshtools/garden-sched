@@ -15,9 +15,7 @@
  */
 package com.sshtools.gardensched;
 
-import java.io.Serializable;
-
 public interface TaskSuccessHandler {
 
-	void handleSuccess(ClusterID id, TaskSpec spec, Serializable task, TaskCompletionContext context);
+	void handleSuccess(ClusterID id, TaskSpec spec, DistributedTask<?> task, TaskCompletionContext context);
 }
