@@ -19,16 +19,16 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 
-public interface DistributedRunnable extends Runnable, DistributedTask<Void, SerializableRunnable> {
+public interface DistributedRunnable extends Runnable, DistributedTask<SerializableRunnable> {
 
-	public final class DistributedRunnableImpl extends AbstractTask<Void, SerializableRunnable> implements DistributedRunnable {
+	public final class DistributedRunnableImpl extends AbstractTask<SerializableRunnable> implements DistributedRunnable {
 		
 		private SerializableRunnable task;
 		
 		public DistributedRunnableImpl() {
 		}
 
-		public DistributedRunnableImpl(AbstractBuilder<?, Void, ?> bldr, SerializableRunnable task) {
+		public DistributedRunnableImpl(AbstractBuilder<?, ?, ?> bldr, SerializableRunnable task) {
 			super(bldr);
 			this.task = task;
 		}
@@ -45,18 +45,23 @@ public interface DistributedRunnable extends Runnable, DistributedTask<Void, Ser
 		@Override
 		public void writeTo(DataOutput out) throws IOException {
 			super.writeTo(out);
-			DistributedScheduledExecutor.srlzr.get().serialize(task, out);
+			DistributedScheduledExecutor.currentSerializer().serialize(task, out);
 		}
 
 		@Override
 		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
 			super.readFrom(in);
-			task = (SerializableRunnable) DistributedScheduledExecutor.srlzr.get().deserialize(SerializableRunnable.class, in);
+			task = (SerializableRunnable) DistributedScheduledExecutor.currentSerializer().deserialize(SerializableRunnable.class, in);
 			task = (SerializableRunnable) DistributedScheduledExecutor.currentFilter().filter(task);
+		}
+
+		@Override
+		public String key() {
+			return key == null ? task.getClass().getName() : key;
 		}
 	}
 	
-	public final static class Builder  extends AbstractBuilder<Builder, Void,  SerializableRunnable > {
+	public final static class Builder  extends AbstractBuilder<Builder, SerializableRunnable, DistributedRunnable > {
 
 		public Builder( SerializableRunnable  task) {
 			super(task);

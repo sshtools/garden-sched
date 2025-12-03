@@ -76,7 +76,7 @@ public class TaskSpec implements Streamable {
 		out.writeInt(unit.ordinal());
 		out.writeLong(submitted.toEpochMilli());
 
-		DistributedScheduledExecutor.srlzr.get().serialize(trigger, out);
+		DistributedScheduledExecutor.currentSerializer().serialize(trigger, out);
 
 	}
 
@@ -88,7 +88,7 @@ public class TaskSpec implements Streamable {
 		unit = TimeUnit.values()[in.readInt()];
 		submitted = Instant.ofEpochMilli(in.readLong());
 
-		trigger = (TaskTrigger) DistributedScheduledExecutor.srlzr.get().deserialize(TaskTrigger.class, in);
+		trigger = (TaskTrigger) DistributedScheduledExecutor.currentSerializer().deserialize(TaskTrigger.class, in);
 		trigger = (TaskTrigger) DistributedScheduledExecutor.currentFilter().filter(trigger);
 	}
 

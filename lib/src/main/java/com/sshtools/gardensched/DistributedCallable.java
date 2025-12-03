@@ -18,18 +18,19 @@ package com.sshtools.gardensched;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
+import java.io.Serializable;
 import java.util.concurrent.Callable;
 
-public interface DistributedCallable<RESULT> extends Callable<RESULT>, DistributedTask<RESULT, SerializableCallable<RESULT>> {
+public interface DistributedCallable<RESULT extends Serializable> extends Callable<RESULT>, DistributedTask<SerializableCallable<RESULT>> {
 
-	public final class DistributedCallableImpl<RESULT> extends AbstractTask<RESULT, SerializableCallable<RESULT>> implements DistributedCallable<RESULT> {
+	public final class DistributedCallableImpl<RESULT extends Serializable> extends AbstractTask<SerializableCallable<RESULT>> implements DistributedCallable<RESULT> {
 		
 		private SerializableCallable<RESULT> task;
 		
 		public DistributedCallableImpl() {
 		}
 
-		DistributedCallableImpl(AbstractBuilder<?, RESULT, ?> bldr, SerializableCallable<RESULT> task) {
+		DistributedCallableImpl(AbstractBuilder<?, ?, ?> bldr, SerializableCallable<RESULT> task) {
 			super(bldr);
 			this.task = task;
 		}
@@ -46,19 +47,24 @@ public interface DistributedCallable<RESULT> extends Callable<RESULT>, Distribut
 		@Override
 		public void writeTo(DataOutput out) throws IOException {
 			super.writeTo(out);
-			DistributedScheduledExecutor.srlzr.get().serialize(task, out);
+			DistributedScheduledExecutor.currentSerializer().serialize(task, out);
 		}
 
 		@SuppressWarnings("unchecked")
 		@Override
 		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
 			super.readFrom(in);
-			task = (SerializableCallable<RESULT>) DistributedScheduledExecutor.srlzr.get().deserialize(SerializableCallable.class, in);
+			task = (SerializableCallable<RESULT>) DistributedScheduledExecutor.currentSerializer().deserialize(SerializableCallable.class, in);
 			task = (SerializableCallable<RESULT>) DistributedScheduledExecutor.currentFilter().filter(task);
+		}
+
+		@Override
+		public String key() {
+			return key == null ? task.getClass().getName() : key;
 		}
 	}
 	
-	public final static class Builder<RESULT> extends AbstractBuilder<Builder<RESULT>, RESULT,  SerializableCallable<RESULT> > {
+	public final static class Builder<RESULT extends Serializable> extends AbstractBuilder<Builder<RESULT>, SerializableCallable<RESULT>, DistributedCallable<RESULT>  > {
 
 		public Builder( SerializableCallable<RESULT>  task) {
 			super(task);
@@ -74,19 +80,19 @@ public interface DistributedCallable<RESULT> extends Callable<RESULT>, Distribut
 		}
 	}
 
-	public static <RESULT> DistributedCallable<RESULT> of(SerializableCallable<RESULT> task, String... classifiers) {
+	public static <RESULT extends Serializable> DistributedCallable<RESULT> of(SerializableCallable<RESULT> task, String... classifiers) {
 		return builder(null, task).withClassifiers(classifiers).build();
 	}
 
-	public static <RESULT> DistributedCallable<RESULT> local(SerializableCallable<RESULT> task, String... classifiers) {
+	public static <RESULT extends Serializable> DistributedCallable<RESULT> local(SerializableCallable<RESULT> task, String... classifiers) {
 		return builder(null, task).withClassifiers(classifiers).withAffinity(Affinity.LOCAL).build();
 	}
 
-	public static <RESULT> DistributedTask<RESULT, SerializableCallable<RESULT>> of(String id, SerializableCallable<RESULT> task, String... classifiers) {
+	public static <RESULT extends Serializable> DistributedTask<SerializableCallable<RESULT>> of(String id, SerializableCallable<RESULT> task, String... classifiers) {
 		return builder(id, task).withClassifiers(classifiers).build();
 	}
 	
-	public static <RESULT> Builder<RESULT> builder(String id, SerializableCallable<RESULT> task) {
+	public static <RESULT extends Serializable> Builder<RESULT> builder(String id, SerializableCallable<RESULT> task) {
 		return new Builder<>(id, task);
 	}
 }

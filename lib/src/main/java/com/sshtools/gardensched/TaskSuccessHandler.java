@@ -13,8 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-module com.sshtools.gardensched {
-	requires transitive org.jgroups;
-	requires org.slf4j;
-	exports com.sshtools.gardensched;
+package com.sshtools.gardensched;
+
+import java.io.Serializable;
+
+public interface TaskSuccessHandler {
+
+	void handleSuccess(ClusterID id, TaskSpec spec, Serializable task, TaskCompletionContext context);
 }

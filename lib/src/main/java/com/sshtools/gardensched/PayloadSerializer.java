@@ -18,19 +18,34 @@ package com.sshtools.gardensched;
 import static org.jgroups.util.Util.objectFromStream;
 import static org.jgroups.util.Util.objectToStream;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInput;
+import java.io.DataInputStream;
 import java.io.DataOutput;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.Base64;
 
-public interface TaskSerializer {
+public interface PayloadSerializer {
 
-	void serialize(Serializable task, DataOutput output) throws IOException;
+	void serialize(Serializable object, DataOutput output) throws IOException;
 
 	Serializable deserialize(Class<? extends Serializable> type, DataInput input) throws IOException;
+	
+	default String serializeToString(Serializable object) throws IOException {
+		var baos = new ByteArrayOutputStream();
+		serialize(object, new DataOutputStream(baos));
+		return Base64.getEncoder().encodeToString(baos.toByteArray());
+	}
 
-	public static TaskSerializer defaultSerializer() {
-		return new TaskSerializer() {
+	default Serializable deserializeFromString(Class<? extends Serializable> type, String input) throws IOException {
+		return deserialize(type, new DataInputStream(new ByteArrayInputStream(Base64.getDecoder().decode(input))));
+	}
+
+	public static PayloadSerializer defaultSerializer() {
+		return new PayloadSerializer() {
 
 			@Override
 			public void serialize(Serializable task, DataOutput output) throws IOException {

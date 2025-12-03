@@ -18,6 +18,7 @@ package com.sshtools.gardensched;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
+import java.io.Serializable;
 
 import org.jgroups.Address;
 import org.jgroups.util.Streamable;
@@ -26,24 +27,25 @@ import org.jgroups.util.Util;
 import com.sshtools.gardensched.DistributedCallable.DistributedCallableImpl;
 import com.sshtools.gardensched.DistributedRunnable.DistributedRunnableImpl;
 
-public class Request<RESULT> implements Streamable {
+public class Request implements Streamable {
 	public enum Type {
-		EXECUTE, EXECUTED, RESULT, REMOVE, REMOVED, UNLOCK, LOCK, LOCKED, UNLOCKED
+		EXECUTE, EXECUTED, RESULT, REMOVE, REMOVED, UNLOCK, LOCK, LOCKED, UNLOCKED, EVENT
 	}
 
 	private Type type;
-	private DistributedTask<RESULT, ?> task;
+	private DistributedTask<?> task;
 	private ClusterID id;
-	private RESULT result;
+	private Object result;
 	private TaskSpec spec;
 	private String lockName;
 	private Address locker;
+	private Serializable event;
 
 	public Request() {
 	}
 
-	Request(Type type, DistributedTask<RESULT, ?> task, ClusterID id, RESULT result, TaskSpec spec, Address locker,
-			String lockName) {
+	Request(Type type, DistributedTask<?> task, ClusterID id, Object result, TaskSpec spec, Address locker,
+			String lockName, Serializable event) {
 		this.type = type;
 		this.task = task;
 		this.id = id;
@@ -51,6 +53,7 @@ public class Request<RESULT> implements Streamable {
 		this.spec = spec;
 		this.lockName = lockName;
 		this.locker = locker;
+		this.event = event;
 	}
 
 	public Address locker() {
@@ -65,7 +68,7 @@ public class Request<RESULT> implements Streamable {
 		return type;
 	}
 
-	public DistributedTask<RESULT, ?> task() {
+	public DistributedTask<?> task() {
 		return task;
 	}
 
@@ -73,12 +76,16 @@ public class Request<RESULT> implements Streamable {
 		return id;
 	}
 
-	public RESULT result() {
+	public Object result() {
 		return result;
 	}
 
 	public TaskSpec spec() {
 		return spec;
+	}
+
+	public Serializable event() {
+		return event;
 	}
 
 	@Override
@@ -94,9 +101,9 @@ public class Request<RESULT> implements Streamable {
 		Util.objectToStream(result, out);
 		out.writeUTF(lockName);
 		Util.writeAddress(locker, out);
+		DistributedScheduledExecutor.currentSerializer().serialize(event, out);
 	}
 
-	@SuppressWarnings("unchecked")
 	@Override
 	public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
 		type = Type.values()[in.readInt()];
@@ -108,7 +115,7 @@ public class Request<RESULT> implements Streamable {
 				task = Util.readStreamable(DistributedCallableImpl::new, in);
 			}
 			else {
-				task = (DistributedTask<RESULT, ?>) Util.readStreamable(DistributedRunnableImpl::new, in);
+				task = (DistributedTask<?>) Util.readStreamable(DistributedRunnableImpl::new, in);
 			}
 		} else {
 			task = null;
@@ -117,6 +124,7 @@ public class Request<RESULT> implements Streamable {
 		result = Util.objectFromStream(in);
 		lockName = in.readUTF();
 		locker = Util.readAddress(in);
+		event = DistributedScheduledExecutor.currentSerializer().deserialize(Serializable.class, in);
 	}
 
 }

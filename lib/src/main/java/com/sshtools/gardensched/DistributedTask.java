@@ -29,35 +29,61 @@ import java.util.Set;
 import org.jgroups.util.Streamable;
 import org.jgroups.util.UUID;
 
-public interface DistributedTask<RESULT, TASK extends Serializable> extends Streamable {
+public interface DistributedTask<TASK extends Serializable> extends Streamable {
 	
-	public abstract class AbstractTask<RESULT, TASK extends Serializable> implements DistributedTask<RESULT, TASK> {
+	public final static Affinity DEFAULT_AFFINTY = Affinity.ANY;
+	public final static ConflictResolution DEFAULT_CONFLICT_RESOLUTION = ConflictResolution.THROW;
+	
+	public abstract class AbstractTask<TASK extends Serializable> implements DistributedTask<TASK> {
 		
 		private Affinity affinity;
 		private String id;
 		private ConflictResolution onConflict;
 		private Set<String> classifiers;
+		private Boolean persistent;
+		private String bundle;
+		private String name;
+		protected String key;
+
 		
 		public AbstractTask() {
 		}
 		
-		public AbstractTask(AbstractBuilder<?, RESULT, ?> bldr) {
+		public AbstractTask(AbstractBuilder<?, ?, ?> bldr) {
 			this.affinity = bldr.affinity;
 			this.affinity = bldr.affinity;
 			this.onConflict = bldr.onConflict;
 			this.id = bldr.id;
 			this.classifiers = Collections.unmodifiableSet(new LinkedHashSet<>( bldr.classifiers));
+			this.persistent = bldr.persistent;
+			this.key = bldr.key;
+			this.bundle = bldr.bundle;
+			this.name = bldr.name;
 		}
 
-		public AbstractTask(Affinity affinity, String id, ConflictResolution onConflict, String... classifiers) {
+		public AbstractTask(Affinity affinity, String id, ConflictResolution onConflict, Boolean persistent, String key, String bundle, String name, String... classifiers) {
 			this.affinity = affinity;
 			this.onConflict = onConflict;
 			this.id = id;
 			this.classifiers = Set.of(classifiers);
+			this.persistent = persistent;
+			this.key = key;
+			this.bundle = bundle;
+			this.name = name;
 		}
 
 		@Override
-		public Set<String> classifiers() {
+		public Optional<String> name() {
+			return Optional.ofNullable(name);
+		}
+
+		@Override
+		public Optional<String> bundle() {
+			return Optional.ofNullable(bundle);
+		}
+
+		@Override
+		public final Set<String> classifiers() {
 			return classifiers;
 		}
 
@@ -72,6 +98,11 @@ public interface DistributedTask<RESULT, TASK extends Serializable> extends Stre
 		}
 
 		@Override
+		public final Optional<Boolean> persistent() {
+			return Optional.ofNullable(persistent);
+		}
+
+		@Override
 		public final Affinity affinity() {
 			return affinity;
 		}
@@ -81,6 +112,11 @@ public interface DistributedTask<RESULT, TASK extends Serializable> extends Stre
 			out.writeUTF(affinity.name());
 			out.writeUTF(id);
 			out.writeUTF(onConflict.name());
+			out.writeBoolean(persistent != null);
+			out.writeBoolean(persistent != null && persistent);
+			out.writeUTF(key);
+			out.writeUTF(bundle);
+			out.writeUTF(name);
 		}
 
 		@Override
@@ -88,18 +124,32 @@ public interface DistributedTask<RESULT, TASK extends Serializable> extends Stre
 			affinity = Affinity.valueOf(in.readUTF());
 			id =  in.readUTF();
 			onConflict = ConflictResolution.valueOf(in.readUTF());
+			if(in.readBoolean()) {
+				persistent = in.readBoolean();
+			}
+			else {
+				in.readBoolean();
+				persistent = null;
+			}
+			key = in.readUTF();
+			bundle = in.readUTF();
+			name = in.readUTF();
 		}
 
 	}
 	
-	public static abstract class AbstractBuilder<BLDR extends AbstractBuilder<BLDR, RESULT, TSK>, RESULT, TSK> {
+	public static abstract class AbstractBuilder<BLDR extends AbstractBuilder<BLDR, TSK, DTSK>, TSK extends Serializable, DTSK extends DistributedTask<TSK>> {
 
 		protected final TSK task;
 		
-		private final String id;
-		private Affinity affinity = Affinity.ANY;
-		private ConflictResolution onConflict = ConflictResolution.THROW;
+		private String id;
+		private Affinity affinity = DistributedTask.DEFAULT_AFFINTY;
+		private ConflictResolution onConflict = DistributedTask.DEFAULT_CONFLICT_RESOLUTION;
 		private Set<String> classifiers =  new LinkedHashSet<>();
+		private Boolean persistent;
+		private String key;
+		private String bundle;
+		private String name;
 
 		public AbstractBuilder(TSK task) {
 			this(UUID.randomUUID().toString(), task);
@@ -108,6 +158,66 @@ public interface DistributedTask<RESULT, TASK extends Serializable> extends Stre
 		public AbstractBuilder(String id, TSK task) {
 			this.id = id;
 			this.task = task;
+			fromAnnotatedObject(task);
+		}
+
+		@SuppressWarnings("unchecked")
+		public final BLDR fromAnnotatedObject(Object object) {
+			var tc = object.getClass().getAnnotation(TaskConfig.class);
+			if(tc != null) {
+			
+				if(!tc.id().equals(""))
+					id = tc.id();
+				
+				if(!tc.key().equals(""))
+					withKey(tc.key());
+				
+				if(!tc.bundle().equals(""))
+					withBundle(tc.bundle());
+				
+				if(!tc.name().equals(""))
+					withName(tc.name());
+				
+				withAffinity(tc.affinity());
+				onConflict(tc.onConflict());
+				
+				withClassifiers(tc.classifiers());
+				
+				if(tc.doPersist() && !tc.dontPersist())
+					withPersistent(true);
+				else if(tc.dontPersist())
+					withPersistent(false);
+			}
+
+			return (BLDR)this;
+		}
+
+		@SuppressWarnings("unchecked")
+		public final BLDR withKey(String key) {
+			this.key = key;
+			return (BLDR)this;
+		}
+
+		@SuppressWarnings("unchecked")
+		public final BLDR withBundle(String bundle) {
+			this.bundle = bundle;
+			return (BLDR)this;
+		}
+
+		@SuppressWarnings("unchecked")
+		public final BLDR withName(String name) {
+			this.name = name;
+			return (BLDR)this;
+		}
+
+		public final BLDR withPersistent() {
+			return withPersistent(true);
+		}
+
+		@SuppressWarnings("unchecked")
+		public final BLDR withPersistent(boolean persistent) {
+			this.persistent = persistent;
+			return (BLDR)this;
 		}
 
 		public final BLDR withClassifiers(String... classifiers) {
@@ -140,9 +250,23 @@ public interface DistributedTask<RESULT, TASK extends Serializable> extends Stre
 			this.onConflict = onConflict;
 			return (BLDR)this;
 		}
+		
+		public abstract DTSK build();
 	}
 	
+	Optional<Boolean> persistent();
+	
 	Set<String> classifiers();
+	
+	default String displayName() {
+		return name().orElseGet(() -> key());
+	}
+	
+	Optional<String> name();
+	
+	String key();
+	
+	Optional<String> bundle();
 
 	TASK task();
 

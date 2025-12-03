@@ -4,10 +4,10 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.ComponentScan;
 
-import com.sshtools.gardensched.spring.SpringGardenSched;
+import com.sshtools.gardensched.spring.SpringGardenSchedConfig;
 
 @SpringBootApplication
-@ComponentScan(basePackageClasses = SpringGardenSched.class)
+@ComponentScan(basePackageClasses = SpringGardenSchedConfig.class)
 public class GardenSchedSpringExampleApplication {
 
 	public static void main(String[] args) {

@@ -17,13 +17,13 @@ package com.sshtools.gardensched.spring;
 
 import org.springframework.context.ApplicationContext;
 
-import com.sshtools.gardensched.TaskFilter; 
+import com.sshtools.gardensched.PayloadFilter; 
 
-public class SpringTaskFilter implements TaskFilter {
+public class SpringPayloadFilter implements PayloadFilter {
 	
 	private ApplicationContext context;
 
-	public  SpringTaskFilter(ApplicationContext context) {
+	public  SpringPayloadFilter(ApplicationContext context) {
 		this.context = context;
 	}
 

@@ -15,17 +15,32 @@
  */
 package com.sshtools.gardensched;
 
-public interface TaskFilter {
+import static java.lang.annotation.RetentionPolicy.RUNTIME;
 
-	<O> O filter(O task);
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.Target;
 
-	static TaskFilter nullFilter() {
-		return new TaskFilter() {
-			@Override
-			public <O> O filter(O task) {
-				return task;
-			}
-		};
-	}
+@Retention(RUNTIME)
+@Target(ElementType.TYPE)
+public @interface TaskConfig {
+	
+	String id() default "";
+	
+	String key() default "";
+	
+	String bundle() default "";
+	
+	String name() default "";
 
+	Affinity affinity() default Affinity.ANY;
+	
+	ConflictResolution onConflict() default ConflictResolution.THROW;
+	
+	String[] classifiers() default {};
+	
+	boolean doPersist() default false;
+	
+	boolean dontPersist() default false;
+	
 }

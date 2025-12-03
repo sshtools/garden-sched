@@ -42,7 +42,7 @@ public class GardenSchedTaskScheduler implements TaskScheduler {
 	
 	@Override
 	public ScheduledFuture<?> schedule(Runnable task, Trigger trigger) {
-		return executor.schedule(task, new TaskTriggerAdapter(trigger));
+		return executor.schedule(task, new TriggerAdapter(trigger));
 	}
 
 	@Override
