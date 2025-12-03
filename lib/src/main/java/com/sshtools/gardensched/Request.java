@@ -29,102 +29,338 @@ import com.sshtools.gardensched.DistributedRunnable.DistributedRunnableImpl;
 
 public class Request implements Streamable {
 	public enum Type {
-		EXECUTE, EXECUTED, RESULT, REMOVE, REMOVED, UNLOCK, LOCK, LOCKED, UNLOCKED, EVENT
+		EXECUTE, EXECUTED, RESULT, REMOVE, REMOVED, UNLOCK, LOCK, LOCKED, UNLOCKED, EVENT, START_PROGRESS, PROGRESS, PROGRESS_MESSAGE
+	}
+	
+	public final static class ResultPayload implements Streamable {
+
+		private Serializable result;
+
+		public ResultPayload() { }
+		
+		public ResultPayload(Serializable result) {
+			super();
+			this.result = result;
+		}
+
+		public Serializable result() {
+			return result;
+		}
+
+		@Override
+		public void writeTo(DataOutput out) throws IOException {
+			DistributedScheduledExecutor.currentSerializer().serialize(result, out);
+		}
+
+		@Override
+		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
+			result = DistributedScheduledExecutor.currentSerializer().deserialize(Serializable.class, in);
+		}
+	}
+
+	public final static class ProgressMessagePayload implements Streamable {
+		
+		private String message;
+		private String key;
+		private String bundle;
+		private String[] args;
+
+		public ProgressMessagePayload() { }
+
+		public ProgressMessagePayload(String message) {
+			super();
+			this.message = message;
+		}
+
+		public ProgressMessagePayload(String bundle, String key, String... args) {
+			super();
+			this.key = key;
+			this.bundle = bundle;
+			this.args = args;
+		}
+
+		public String message() {
+			return message;
+		}
+
+		public String key() {
+			return key;
+		}
+
+		public String bundle() {
+			return bundle;
+		}
+
+		public String[] args() {
+			return args;
+		}
+
+		@Override
+		public void writeTo(DataOutput out) throws IOException {
+			out.writeUTF(message);
+			out.writeUTF(key);
+			out.writeUTF(bundle);
+			if(args == null)
+				out.writeInt(0);
+			else {
+				out.writeInt(args.length);
+				for(var a : args) {
+					out.writeUTF(a);
+				}
+			}
+		}
+
+		@Override
+		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
+			message = in.readUTF();
+			key = in.readUTF();
+			bundle = in.readUTF();
+			var a = in.readInt();
+			args = new String[a];
+			for(var i = 0 ; i < a ; i++) {
+				args[i] = in.readUTF();
+			}
+		}
+	}
+
+	public final static class StartProgressPayload implements Streamable {
+		
+		private long max;
+		public StartProgressPayload() { }
+		
+		public StartProgressPayload(long max) {
+			super();
+			this.max = max;
+		}
+
+		public long max() {
+			return max;
+		}
+
+		@Override
+		public void writeTo(DataOutput out) throws IOException {
+			out.writeLong(max);
+		}
+
+		@Override
+		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
+			max = in.readLong();
+		}
+	}
+
+	public final static class ProgressPayload implements Streamable {
+		
+		private long progress;
+		
+		public ProgressPayload() { }
+		
+		public ProgressPayload(long progress) {
+			super();
+			this.progress = progress;
+		}
+
+		public long progress() {
+			return progress;
+		}
+
+		@Override
+		public void writeTo(DataOutput out) throws IOException {
+			out.writeLong(progress);
+		}
+
+		@Override
+		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
+			progress = in.readLong();
+		}
+		
+	}
+	
+	public final static class LockPayload implements Streamable {
+		private String lockName;
+		private Address locker;
+
+		public LockPayload() {}
+
+		public LockPayload(String lockName, Address locker) {
+			super();
+			this.lockName = lockName;
+			this.locker = locker;
+		}
+
+		@Override
+		public void writeTo(DataOutput out) throws IOException {
+			out.writeUTF(lockName);
+			Util.writeAddress(locker, out);
+		}
+
+		@Override
+		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
+			lockName = in.readUTF();
+			locker = Util.readAddress(in);
+		}
+
+		public Address locker() {
+			return locker;
+		}
+
+		public String lockName() {
+			return lockName;
+		}
+		
+	}
+
+	public final static class ExecutePayload implements Streamable {
+		private DistributedTask<?> task;
+		private TaskSpec spec;
+		
+		public ExecutePayload() {}
+
+		public ExecutePayload(DistributedTask<?> task, TaskSpec spec) {
+			super();
+			this.task = task;
+			this.spec = spec;
+		}
+
+		public DistributedTask<?> task() {
+			return task;
+		}
+
+		public TaskSpec spec() {
+			return spec;
+		}
+
+		@Override
+		public void writeTo(DataOutput out) throws IOException {
+			Util.writeStreamable(spec, out);
+			out.writeBoolean(task != null);
+			if (task != null) {
+				out.writeBoolean(task instanceof DistributedCallable);
+				Util.writeStreamable(task, out);
+			}
+		}
+
+		@Override
+		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
+			spec = Util.readStreamable(TaskSpec::new, in);
+			var haveTask = in.readBoolean();
+			if (haveTask) {
+				var isCallable = in.readBoolean();
+				if(isCallable) {
+					task = Util.readStreamable(DistributedCallableImpl::new, in);
+				}
+				else {
+					task = (DistributedTask<?>) Util.readStreamable(DistributedRunnableImpl::new, in);
+				}
+			} else {
+				task = null;
+			}
+			
+		}
+		
+	}
+	
+	public final static class EventPayload implements Streamable {
+		private Serializable event;
+		
+		public EventPayload() {}
+		
+		public EventPayload(Serializable event) {
+			this.event = event;
+		}
+
+		@Override
+		public void writeTo(DataOutput out) throws IOException {
+			DistributedScheduledExecutor.currentSerializer().serialize(event, out);
+		}
+
+		@Override
+		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
+			event = DistributedScheduledExecutor.currentSerializer().deserialize(Serializable.class, in);
+		}
+		
+		public  Serializable event() {
+			return  event;
+		}
 	}
 
 	private Type type;
-	private DistributedTask<?> task;
 	private ClusterID id;
-	private Object result;
-	private TaskSpec spec;
-	private String lockName;
-	private Address locker;
-	private Serializable event;
+	private Streamable payload;
 
 	public Request() {
 	}
 
-	Request(Type type, DistributedTask<?> task, ClusterID id, Object result, TaskSpec spec, Address locker,
-			String lockName, Serializable event) {
+	Request(Type type, ClusterID id) {
+		this(type, id, null);
+	}
+
+	Request(Type type, Streamable payload) {
+		this(type, null, payload);
+	}
+
+	Request(Type type, ClusterID id, Streamable payload) {
 		this.type = type;
-		this.task = task;
 		this.id = id;
-		this.result = result;
-		this.spec = spec;
-		this.lockName = lockName;
-		this.locker = locker;
-		this.event = event;
+		this.payload = payload;
 	}
-
-	public Address locker() {
-		return locker;
-	}
-
-	public String lockName() {
-		return lockName;
+	
+	@SuppressWarnings("unchecked")
+	public <S extends Streamable> S payload() {
+		return (S)payload;
 	}
 
 	public Type type() {
 		return type;
 	}
 
-	public DistributedTask<?> task() {
-		return task;
-	}
-
 	public ClusterID id() {
 		return id;
-	}
-
-	public Object result() {
-		return result;
-	}
-
-	public TaskSpec spec() {
-		return spec;
-	}
-
-	public Serializable event() {
-		return event;
 	}
 
 	@Override
 	public void writeTo(DataOutput out) throws IOException {
 		out.writeInt(type.ordinal());
-		Util.writeStreamable(spec, out);
-		out.writeBoolean(task != null);
-		if (task != null) {
-			out.writeBoolean(task instanceof DistributedCallable);
-			Util.writeStreamable(task, out);
-		}
 		Util.writeStreamable(id, out);
-		Util.objectToStream(result, out);
-		out.writeUTF(lockName);
-		Util.writeAddress(locker, out);
-		DistributedScheduledExecutor.currentSerializer().serialize(event, out);
+		if(payload != null)
+			payload.writeTo(out);
 	}
 
 	@Override
 	public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
 		type = Type.values()[in.readInt()];
-		spec = Util.readStreamable(TaskSpec::new, in);
-		var haveTask = in.readBoolean();
-		if (haveTask) {
-			var isCallable = in.readBoolean();
-			if(isCallable) {
-				task = Util.readStreamable(DistributedCallableImpl::new, in);
-			}
-			else {
-				task = (DistributedTask<?>) Util.readStreamable(DistributedRunnableImpl::new, in);
-			}
-		} else {
-			task = null;
-		}
 		id = Util.readStreamable(ClusterID::new, in);
-		result = Util.objectFromStream(in);
-		lockName = in.readUTF();
-		locker = Util.readAddress(in);
-		event = DistributedScheduledExecutor.currentSerializer().deserialize(Serializable.class, in);
+		switch(type) {
+		case EVENT:
+			payload = new EventPayload();
+			break;
+		case EXECUTE:
+			payload = new ExecutePayload();
+			break;
+		case LOCK:
+		case LOCKED:
+		case UNLOCK:
+		case UNLOCKED:
+			payload = new LockPayload();
+			break;
+		case RESULT:
+			payload = new ResultPayload();
+			break;
+		case START_PROGRESS:
+			payload = new StartProgressPayload();
+			break;
+		case PROGRESS:
+			payload = new ProgressPayload();
+			break;
+		case PROGRESS_MESSAGE:
+			payload = new ProgressMessagePayload();
+			break;
+		default:
+			payload = null;
+			break;
+		}
+		if(payload != null) {
+			payload.readFrom(in);
+		}
 	}
 
 }

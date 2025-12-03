@@ -20,7 +20,7 @@ import java.util.concurrent.Delayed;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
-public class DelegatedScheduledFuture<V> extends AbstractDelegateScheduledFuture<V> {
+public abstract class DelegatedScheduledFuture<V> extends AbstractDelegateScheduledFuture<V> {
 
 	public DelegatedScheduledFuture(ClusterID id, ScheduledFuture<V> delegate, Set<String> classifiers) {
 		super(id, delegate, classifiers);

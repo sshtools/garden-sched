@@ -10,5 +10,5 @@ public interface TaskProgress {
 	
 	void message(String text);
 	
-	void message(String bundle, String key, Object... args);
+	void message(String bundle, String key, String... args);
 }

@@ -25,6 +25,12 @@ public final class TaskInfo {
 	Optional<Instant> lastCompleted = Optional.empty();
 	Optional<Throwable> lastError = Optional.empty();
 	Future<?> future;
+	Optional<Long> maxProgress = Optional.empty();
+	Optional<Long> progress = Optional.empty();
+	Optional<String> message = Optional.empty();
+	Optional<String> bundle = Optional.empty();;
+	Optional<String> key = Optional.empty();
+	Optional<String[]> args = Optional.empty();
 	
 	TaskInfo(Instant lastScheduled, Future<?> future, TaskInfo previous) {
 		this.lastScheduled = lastScheduled;
@@ -35,7 +41,45 @@ public final class TaskInfo {
 			lastError  = previous.lastError;
 		}
 	}
+
+	void message(String bundle, String key, String... args) {
+		this.message = Optional.empty();
+		this.bundle = Optional.of(bundle);
+		this.key = Optional.of(key);
+		this.args = Optional.of(args);
+	}
 	
+	void message(String message) {
+		this.message = Optional.of(message);
+		this.bundle = Optional.empty();;
+		this.key = Optional.empty();
+		this.args = Optional.empty();
+	}
+	
+	public Optional<Long> maxProgress() {
+		return maxProgress;
+	}
+
+	public Optional<Long> progress() {
+		return progress;
+	}
+
+	public Optional<String> message() {
+		return message;
+	}
+
+	public Optional<String> bundle() {
+		return bundle;
+	}
+
+	public Optional<String> key() {
+		return key;
+	}
+
+	public Optional<String[]> args() {
+		return args;
+	}
+
 	public Instant lastScheduled() {
 		return lastScheduled;
 	}

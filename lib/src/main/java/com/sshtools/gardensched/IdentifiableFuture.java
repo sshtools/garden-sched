@@ -23,4 +23,6 @@ public interface IdentifiableFuture<V> extends Future<V> {
 	ClusterID clusterID();
 	
 	Set<String> classifiers();
+	
+	TaskInfo info();
 }
