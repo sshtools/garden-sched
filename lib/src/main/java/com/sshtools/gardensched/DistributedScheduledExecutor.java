@@ -1438,7 +1438,17 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	}
 
 	private void handleExecute(ClusterID id, Address sender, DistributedTask<?> task, TaskSpec spec) {
-		var entry = tasks.computeIfAbsent(id, iid -> new TaskEntry(id, task, sender, 1, spec));
+		var entry = new TaskEntry(id, task, sender, 1, spec);
+		synchronized(tasks) {
+			var was = tasks.get(id);
+			if(was != null) {
+				var tinfo = taskInfo.get(id);
+				if(tinfo != null) {
+					tinfo.future.cancel(true);
+				}
+			}
+			tasks.put(id, entry);
+		}
 
 		if (shouldRun(entry)) {
 			execute(entry);

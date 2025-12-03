@@ -39,6 +39,12 @@ public final class TaskInfo {
 			lastExecuted = previous.lastExecuted;
 			lastCompleted = previous.lastCompleted;
 			lastError  = previous.lastError;
+			maxProgress = previous.maxProgress;
+			progress = previous.progress;
+			bundle = previous.bundle;
+			key = previous.key;
+			args = previous.args;
+			message = previous.message;
 		}
 	}
 

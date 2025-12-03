@@ -15,6 +15,8 @@
  */
 package com.sshtools.gardensched.spring;
 
+import java.time.Duration;
+
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -38,15 +40,18 @@ import com.sshtools.gardensched.PayloadSerializer;
 public class SpringGardenSchedConfig {
 	
 	@Bean
-	public ObjectMapper objectMapper() {
+	public ObjectMapper objectMapper(PayloadFilter payloadFilter) {
 
 		var sm = new SimpleModule();
 		sm.addSerializer(CronTrigger.class, new CronTriggerSerializer());
 		sm.addSerializer(PeriodicTrigger.class, new PeriodicTriggerSerializer());
+		
+//		var pf = new PayloadFilteringModule(payloadFilter);
 
 		return JsonMapper.builder()
 			    .addModule(new Jdk8Module())
 			    .addModule(sm)
+//			    .addModule(pf)
 			    .configure(MapperFeature.REQUIRE_SETTERS_FOR_GETTERS, true)
 			    .activateDefaultTyping(new LaissezFaireSubTypeValidator(), 
 			    		ObjectMapper.DefaultTyping.NON_FINAL_AND_ENUMS,
@@ -66,16 +71,16 @@ public class SpringGardenSchedConfig {
 	}
 
 	@Bean
-	public PayloadFilter taskFilter(ApplicationContext context) {
+	public PayloadFilter payloadFilter(ApplicationContext context) {
 		return new SpringPayloadFilter(context);
 	}
 
 	@Bean
-	public DistributedScheduledExecutor distributedScheduledExecutor(PayloadSerializer payloadSerializer, PayloadFilter taskFilter) throws Exception {
+	public DistributedScheduledExecutor distributedScheduledExecutor(PayloadSerializer payloadSerializer, PayloadFilter payloadFilter) throws Exception {
 		return new DistributedScheduledExecutor.Builder().
 				withPayloadSerializer(payloadSerializer).
-				withPayloadFilter(taskFilter).
-//				withAcknowledgeTimeout(Duration.ofMinutes(30)). // Helps debugging
+				withPayloadFilter(payloadFilter).
+				withAcknowledgeTimeout(Duration.ofMinutes(30)). // Helps debugging
 				build();
 	}
 }

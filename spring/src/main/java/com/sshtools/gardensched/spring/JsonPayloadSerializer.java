@@ -20,10 +20,15 @@ import java.io.DataOutput;
 import java.io.IOException;
 import java.io.Serializable;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sshtools.gardensched.PayloadSerializer;
 
 public class JsonPayloadSerializer implements PayloadSerializer {
+	
+	private final static Logger LOG = LoggerFactory.getLogger(JsonPayloadSerializer.class);
 
 	private final ObjectMapper mapper;
 	private final static ThreadLocal<ClassLocator> currentClassLocator = new ThreadLocal<>();
@@ -40,9 +45,11 @@ public class JsonPayloadSerializer implements PayloadSerializer {
 
 	@Override
 	public void serialize(Serializable task, DataOutput output) throws IOException {
-		String writeValueAsString = mapper.writeValueAsString(task);
-		System.out.println("XXXX " + writeValueAsString);
-		output.writeUTF(writeValueAsString);
+		var json = mapper.writeValueAsString(task);
+		if(LOG.isDebugEnabled()) {
+			LOG.debug("Serialised payload: {}", json);
+		}
+		output.writeUTF(json);
 	}
 	
 	public static ClassLocator classLocator() {
@@ -53,8 +60,11 @@ public class JsonPayloadSerializer implements PayloadSerializer {
 	public Serializable deserialize(Class<? extends Serializable> type, DataInput input) throws IOException {
 		try {
 			currentClassLocator.set(classLocator);
-			var tskJson = input.readUTF();
-			return mapper.readValue(tskJson, Serializable.class);
+			var json = input.readUTF();
+			if(LOG.isDebugEnabled()) {
+				LOG.debug("Deserialising payload: {}", json);
+			}
+			return mapper.readValue(json, Serializable.class);
 		}
 		finally {
 			currentClassLocator.remove();
