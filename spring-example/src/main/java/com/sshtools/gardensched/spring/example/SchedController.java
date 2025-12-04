@@ -49,21 +49,55 @@ public class SchedController implements BroadcastEventListener {
 			"""
 			<html>
 			<body>
-			<table>
+			<table border="1">
+			<thead>
+			<tr>
+				<td>CID</td>
+				<td>Status</td>
+				<td>Classifiers</td>
+				<td>%age</td>
+				<td>Max</td>
+				<td>Message</td>
+				<td>Schedule</td>
+				<td>Delay</td>
+				<td>Period</td>
+				<td>Unit</td>
+				<td>Trigger</td>
+			</tr>
+			</thead>
 			""";
 		
 		var middle = "";
 		for(var future : distributedScheduledExecutor.futures()) {
+			var info = future.info();
 			var row = """
 					<tr>
 						<td>%1</td>
 						<td>%2</td>
 						<td>%3</td>
+						<td>%4</td>
+						<td>%5</td>
+						<td>%6</td>
+						<td>%7</td>
+						<td>%8</td>
+						<td>%9</td>
+						<td>%A</td>
+						<td>%B</td>
 					</tr>
 					""".
 					replace("%1", future.clusterID().toString()).
-					replace("%2", future.info().active() ? "Active" : "Idle").
-					replace("%3", String.join(", ", future.classifiers()));
+					replace("%2", info.active() ? "Active" : "Idle").
+					replace("%3", String.join(", ", future.classifiers())).
+					replace("%4", info.progress().map(String::valueOf).orElse("None")).
+					replace("%5", info.maxProgress().map(String::valueOf).orElse("None")).
+					replace("%6", info.message().map(String::valueOf).orElseGet(() -> {
+						return info.key().map(k -> info.bundle().orElse("*") + "/" + k + " : " + String.join(", ", info.args().orElse(new String[0]))).orElse("-");
+					})).
+					replace("%7", info.spec().schedule().name()).
+					replace("%8", String.valueOf(info.spec().initialDelay())).
+					replace("%9", String.valueOf(info.spec().period())).
+					replace("%A", info.spec().unit().name()).
+					replace("%B", String.valueOf(info.spec().trigger()));
 			middle += row;
 		}
 		
@@ -101,6 +135,32 @@ public class SchedController implements BroadcastEventListener {
 		var  job = new TestJob("Hello World", 99);
 		
 		distributedScheduledExecutor.schedule(DistributedRunnable.of(job), 10, TimeUnit.SECONDS);
+		
+		return "Job Started";
+	}
+	
+	@RequestMapping(value = "/start-long-job", method = RequestMethod.GET, produces = { "text/plain" })
+	@ResponseBody
+	@ResponseStatus(value = HttpStatus.OK)
+	public String startLongJob(HttpServletRequest request,
+			HttpServletResponse response) {
+		
+		var  job = new LongJob("Finally .. Hello World", 30);
+		
+		distributedScheduledExecutor.schedule(DistributedRunnable.of(job), 10, TimeUnit.SECONDS);
+		
+		return "Job Started";
+	}
+	
+	@RequestMapping(value = "/start-repeating-long-job", method = RequestMethod.GET, produces = { "text/plain" })
+	@ResponseBody
+	@ResponseStatus(value = HttpStatus.OK)
+	public String startRepeatingLongJob(HttpServletRequest request,
+			HttpServletResponse response) {
+		
+		var  job = new LongJob("Finally .. Hello World", 30);
+		
+		distributedScheduledExecutor.scheduleAtFixedRate(DistributedRunnable.of(job), 10, 60, TimeUnit.SECONDS);
 		
 		return "Job Started";
 	}

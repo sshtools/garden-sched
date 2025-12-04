@@ -97,49 +97,4 @@ public class TaskSpec implements Streamable {
 		return "TaskSpec [repetition=" + schedule + ", initialDelay=" + initialDelay + ", period=" + period
 				+ ", unit=" + unit + "]";
 	}
-
-	public TaskSpec adjustTimes() {
-		/* TODO nano resolution */
-		var newSubmitted = Instant.now();
-		var diff = newSubmitted.toEpochMilli() - submitted.toEpochMilli();
-		switch(schedule) {
-		case ONE_SHOT:
-		{
-			var initDelay = unit.toMillis(initialDelay);
-			if(diff > initDelay) {
-				/* Other node should have already fired */
-				return null;
-			}
-			else {
-				initDelay -= diff;
-				initialDelay = unit.convert(initDelay, TimeUnit.MILLISECONDS);
-			}
-			break;
-		}
-		case FIXED_RATE:
-		case FIXED_DELAY:
-		{
-			var initDelay = unit.toMillis(initialDelay);
-			if(diff > initDelay) {
-				/* Other node should have already fired at least once. Make
-				 * the initial delay be what remains until approximately
-				 * the next fire.
-				 *
-				 * Note, for FIXED_DELAY this wont be very accurate, as we
-				 * don't know how long previous executions took
-				 **/
-				var delay = unit.toMillis(period);
-				initialDelay = delay - ( ( initDelay - diff ) % delay );
-			}
-			else {
-				initDelay -= diff;
-				initialDelay = unit.convert(initDelay, TimeUnit.MILLISECONDS);
-			}
-			break;
-		}
-		default:
-			break;
-		}
-		return this;
-	}
 }

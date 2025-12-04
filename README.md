@@ -10,11 +10,12 @@ A distributed task scheduler based on JGroups.
  * If a node goes down, another node will take over any of its jobs.
  * Supports additional `TaskTrigger` scheduling, to match the similar Spring capability. Allows custom scheduling.
  * Customisable serialization of tasks and triggers and other hook points  such as `TaskFilter` to allow Spring integration.
- * Optional Spring helpers.
+ * Optional Spring integration.
+ * Hooks for optional long term peristence.
+ * Job progress callback.
  
 ## Limitations
 
- * No serialization to external storage yet. A job will exists as long as the cluster does.
  * All tasks must be `Serializable`. 
 
 
@@ -26,7 +27,7 @@ Available on Maven Central, so just add the following dependency to your project
 <dependency>
     <groupId>com.sshtools</groupId>
     <artifactId>garden-sched-lib</artifactId>
-    <version>0.0.1</version>
+    <version>0.0.3</version>
 </dependency>
 ```
 

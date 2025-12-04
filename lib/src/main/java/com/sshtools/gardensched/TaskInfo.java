@@ -24,7 +24,8 @@ public final class TaskInfo {
 	Optional<Instant> lastExecuted = Optional.empty();
 	Optional<Instant> lastCompleted = Optional.empty();
 	Optional<Throwable> lastError = Optional.empty();
-	Future<?> future;
+	Future<?> underlyingFuture;
+	IdentifiableFuture<?> userFuture;
 	Optional<Long> maxProgress = Optional.empty();
 	Optional<Long> progress = Optional.empty();
 	Optional<String> message = Optional.empty();
@@ -32,11 +33,14 @@ public final class TaskInfo {
 	Optional<String> key = Optional.empty();
 	Optional<String[]> args = Optional.empty();
 	boolean active;
+	TaskSpec spec;
 	
-	TaskInfo(Instant lastScheduled, Future<?> future, TaskInfo previous) {
+	TaskInfo(TaskSpec spec, Instant lastScheduled, Future<?> underlyingFuture, TaskInfo previous) {
 		this.lastScheduled = lastScheduled;
-		this.future = future;
+		this.underlyingFuture = underlyingFuture;
+		this.spec = spec;
 		if(previous != null) {
+			userFuture = previous.userFuture;
 			lastExecuted = previous.lastExecuted;
 			lastCompleted = previous.lastCompleted;
 			lastError  = previous.lastError;
@@ -61,6 +65,10 @@ public final class TaskInfo {
 		this.bundle = Optional.empty();;
 		this.key = Optional.empty();
 		this.args = Optional.empty();
+	}
+	
+	public TaskSpec spec() {
+		return spec;
 	}
 	
 	public boolean active() {

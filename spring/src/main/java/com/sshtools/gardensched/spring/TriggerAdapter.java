@@ -63,5 +63,10 @@ public class TriggerAdapter implements TaskTrigger {
 			}
 		});
 	}
+
+	@Override
+	public String toString() {
+		return trigger.toString();
+	}
 	
 }

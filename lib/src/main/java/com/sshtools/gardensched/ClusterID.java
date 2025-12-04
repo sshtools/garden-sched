@@ -18,6 +18,7 @@ package com.sshtools.gardensched;
 import org.jgroups.Address;
 import org.jgroups.stack.IpAddress;
 import org.jgroups.util.Streamable;
+import org.jgroups.util.UUID;
 import org.jgroups.util.Util;
 
 import java.io.DataInput;
@@ -26,7 +27,7 @@ import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ClusterID implements Streamable {
-	private Address owner;
+	private String owner;
 	private int id;
 	private String strId;
 
@@ -35,9 +36,10 @@ public class ClusterID implements Streamable {
 	public ClusterID() {
 	}
 
-	public ClusterID(Address owner, int id) {
+	public ClusterID(String owner, int id) {
 		this.owner = owner;
 		this.id = id;
+		checkOwner();
 	}
 
 	public ClusterID(String strId) {
@@ -57,7 +59,7 @@ public class ClusterID implements Streamable {
 	}
 
 	public static synchronized ClusterID createNext(Address addr) {
-		return new ClusterID(addr, nextId.getAndAdd(1));
+		return new ClusterID(addr.toString(), nextId.getAndAdd(1));
 	}
 
 	public int hashCode() {
@@ -77,25 +79,37 @@ public class ClusterID implements Streamable {
 	}
 
 	public void writeTo(DataOutput out) throws IOException {
-		Util.writeAddress(owner, out);
+		checkOwner();
+		out.writeUTF(owner);
 		out.writeInt(id);
 		out.writeUTF(strId);
 	}
 
 	public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
-		owner = Util.readAddress(in);
+		owner = in.readUTF();
 		id = in.readInt();
 		strId = in.readUTF();
+		
+		checkOwner();
+	}
+
+	private void checkOwner() {
+		try {
+			UUID.fromString(owner.toString());
+			throw new Exception();
+		}
+		catch(IllegalArgumentException  e) {
+		}
+		catch(Exception e) {
+			e.printStackTrace();
+		}
 	}
 
 	public static ClusterID parse(String cid) {
 		var idx = cid.indexOf("::");
 		if(idx > -1) {
-			/* TODO hrm. this is not great, I think ClusterID will have to go as the main job identifier and replace
-			 * it with a string
-			 */
 			try {
-				return new ClusterID(new IpAddress(cid.substring(0, cid.indexOf(".."))), Integer.parseInt(cid.substring(idx + 2)));
+				return new ClusterID(cid.substring(0, cid.indexOf("..")), Integer.parseInt(cid.substring(idx + 2)));
 			} catch (Exception e) {
 				throw new IllegalArgumentException(e);
 			}

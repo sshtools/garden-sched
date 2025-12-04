@@ -58,12 +58,12 @@ import org.slf4j.LoggerFactory;
 
 import com.sshtools.gardensched.Request.AckPayload;
 import com.sshtools.gardensched.Request.EventPayload;
-import com.sshtools.gardensched.Request.SubmitPayload;
 import com.sshtools.gardensched.Request.LockPayload;
 import com.sshtools.gardensched.Request.ProgressMessagePayload;
 import com.sshtools.gardensched.Request.ProgressPayload;
 import com.sshtools.gardensched.Request.ResultPayload;
 import com.sshtools.gardensched.Request.StartProgressPayload;
+import com.sshtools.gardensched.Request.SubmitPayload;
 import com.sshtools.gardensched.Request.Type;
 
 public final class DistributedScheduledExecutor implements ScheduledExecutorService {
@@ -405,21 +405,19 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	}
 	
 	private final class EntryFuture<T> implements Future<T> {
-		private final ClusterID id;
 		private final TaskEntry entry;
 		private boolean cancelled;
 
-		private EntryFuture(ClusterID id, TaskEntry entry) {
-			this.id = id;
+		private EntryFuture(TaskEntry entry) {
 			this.entry = entry;
 		}
 
 		@Override
 		public boolean cancel(boolean mayInterruptIfRunning) {
 			if (!cancelled) {
-				LOG.info("Cancelling future {}", id);
+				LOG.info("Cancelling future {}", entry.id);
 				try {
-					removeRequest(id);
+					removeRequest(entry.id);
 					return true;
 				} finally {
 					cancelled = true;
@@ -676,6 +674,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					if (entry == null) {
 						LOG.error("Received result for task I don't know about, {}", id);
 					} else {
+						taskInfo.get(id).active = false;
 						entryResults(id, entry, ((ResultPayload)req.payload()).result());
 					}
 					sendRequest(msg.getSrc(), new Request(Request.Type.ACK, req.id(), new AckPayload(Request.Type.RESULT)));
@@ -721,7 +720,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	private final ConcurrentMap<ClusterID, TaskEntry> tasks = new ConcurrentHashMap<>();
 	private final LockProvider lockProvider;
 	private final ConcurrentMap<ClusterID, TaskInfo> taskInfo = new ConcurrentHashMap<>();
-	private final ConcurrentMap<ClusterID, IdentifiableFuture<?>> returnedFutures = new ConcurrentHashMap<>();
+	private final ConcurrentMap<ClusterID, Future<?>> localFutures = new ConcurrentHashMap<>();
 	private final ExecutorService queue;
 	private final boolean alwaysDistribute;
 	private final Duration acknowledgeTimeout;
@@ -838,7 +837,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
     		/* Cancel tasks on shutdown so only actually running tasks will remain subject
     		 * to the timeout */ 
     		LOG.info("Cancelling locally scheduled tasks.");
-    		taskInfo.values().forEach(tsk -> tsk.future.cancel(false));
+    		taskInfo.values().forEach(tsk -> tsk.underlyingFuture.cancel(false));
     		
             shutdown();
             boolean interrupted = false;
@@ -871,15 +870,17 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	
 	@SuppressWarnings("unchecked")
 	public <F extends IdentifiableFuture<?>> F future(ClusterID task) {
-		return (F)returnedFutures.get(task);
+		var tinfo = taskInfo.get(task);
+		return tinfo == null ? null : (F)tinfo.userFuture;
 	}
 
 	public <F extends IdentifiableFuture<?>> Optional<F> futureOr(ClusterID task) {
 		return Optional.ofNullable(future(task));
 	}
 
-	public Collection<IdentifiableFuture<?>> futures() {
-		return Collections.unmodifiableCollection(returnedFutures.values());
+	@SuppressWarnings("unchecked")
+	public <R> List<IdentifiableFuture<R>> futures() {
+		return taskInfo.values().stream().map(ti ->  (IdentifiableFuture<R>)ti.userFuture).filter(f -> f != null).toList();
 	}
 
 	@Override
@@ -946,52 +947,13 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					map(i -> ClusterID.createNext(i)).
 					orElseGet(() -> ClusterID.createNext(ch.getAddress()));
 
-			TaskEntry dfut = checkTaskId(id);
-			if (dfut != null) {
-				var afut = taskInfo.get(id).future;
-				var rfut = new AbstractDelegateScheduledFuture<>(id, new EntryFuture<>(id, dfut), dtask.classifiers()) {
-
-					@Override
-					public int compareTo(Delayed other) {
-						return ((ScheduledFuture<?>)afut).compareTo(other);
-					}
-
-					@Override
-					public long getDelay(TimeUnit unit) {
-						return ((ScheduledFuture<?>)afut).getDelay(unit);
-					}
-
-					@Override
-					public TaskInfo info() {
-						return taskInfo.get(id);
-					}
-				};
-				returnedFutures.put(id, rfut);
-				return (ScheduledFuture<V>) rfut;
+			var taskEntry = checkTaskId(id);
+			
+			if (taskEntry != null) {
+				return (ScheduledFuture<V>) taskInfo.get(id).userFuture;
 			}
 
-			var ftr = doSubmit(id, dtask, new TaskSpec(Instant.now(), Schedule.ONE_SHOT, delay, delay, unit, null));
-			var afut = taskInfo.get(id).future;
-			var rfut = new AbstractDelegateScheduledFuture<>(id, (Future<V>)ftr, dtask.classifiers()) {
-
-				@Override
-				public int compareTo(Delayed other) {
-					return ((ScheduledFuture<?>)afut).compareTo(other);
-				}
-
-				@Override
-				public long getDelay(TimeUnit unit) {
-					return ((ScheduledFuture<?>)afut).getDelay(unit);
-				}
-
-				@Override
-				public TaskInfo info() {
-					return taskInfo.get(id);
-				}
-
-			};
-			returnedFutures.put(id, rfut);
-			return rfut;
+			return (ScheduledFuture<V>) doSubmit(id, dtask, new TaskSpec(Instant.now(), Schedule.ONE_SHOT, delay, delay, unit, null));
 		} else {
 			if(alwaysDistribute) {
 				if(callable instanceof SerializableCallable cr)
@@ -1016,7 +978,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 						return payloadFilter.filter(callable).call();
 					}
 					finally {
-						returnedFutures.remove(id);
+						localFutures.remove(id);
 					}
 				}, delay, unit);
 				
@@ -1024,7 +986,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 					@Override
 					public boolean cancel(boolean mayInterrupt) {
-						returnedFutures.remove(id);
+						localFutures.remove(id);
 						return super.cancel(mayInterrupt);
 					}
 
@@ -1034,7 +996,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					}
 					
 				};
-				returnedFutures.put(id, dfut);
+				localFutures.put(id, dfut);
 				return dfut;
 			}
 		}
@@ -1114,11 +1076,11 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 	}
 
+	@SuppressWarnings("unchecked")
 	@Override
 	public <T> Future<T> submit(Callable<T> task) {
 		if (checkTask(task)) {
 
-			@SuppressWarnings("unchecked")
 			var dtask = (DistributedCallable<Serializable>) task;
 
 			var id = dtask.id().map(i -> ClusterID.createNext(i))
@@ -1126,10 +1088,11 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 			TaskEntry dfut = checkTaskId(id);
 			if (dfut != null) {
-				return new EntryFuture<T>(id, dfut);
+				return (Future<T>)taskInfo.get(id).userFuture;
 			}
 
 			return doSubmit(id, dtask, DEFAULT_TASK);
+			
 		} else {
 			if (LOG.isDebugEnabled()) {
 				LOG.debug("Not a {}, submitting locally only.", DistributedCallable.class.getName());
@@ -1141,7 +1104,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					return payloadFilter.filter(task).call();
 				}
 				finally {
-					returnedFutures.remove(id);
+					localFutures.remove(id);
 				}
 			});
 			
@@ -1149,7 +1112,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 				@Override
 				public boolean cancel(boolean mayInterrupt) {
-					returnedFutures.remove(id);
+					localFutures.remove(id);
 					return super.cancel(mayInterrupt);
 				}
 
@@ -1159,7 +1122,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				}
 				
 			};
-			returnedFutures.put(id, dfut);
+			localFutures.put(id, dfut);
 			return dfut;
 		}
 	}
@@ -1229,7 +1192,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	}
 
 	private boolean checkTask(Callable<?> task) {
-		return task instanceof DistributedTask;
+		return task instanceof DistributedCallable;
 	}
 
 	private boolean checkTask(Runnable task) {
@@ -1282,49 +1245,10 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 			TaskEntry dfut = checkTaskId(id);
 			if (dfut != null) {
-				var afut = taskInfo.get(id).future;
-				return new AbstractDelegateScheduledFuture<>(id, new EntryFuture<>(id, dfut), dtask.classifiers()) {
-
-					@Override
-					public int compareTo(Delayed other) {
-						return ((ScheduledFuture<?>)afut).compareTo(other);
-					}
-
-					@Override
-					public long getDelay(TimeUnit unit) {
-						return ((ScheduledFuture<?>)afut).getDelay(unit);
-					}
-
-					@Override
-					public TaskInfo info() {
-						return taskInfo.get(id);
-					}
-				};
+				return (ScheduledFuture<V>) taskInfo.get(id).userFuture;
 			}
 
-			var ftr = doSubmit(id, dtask, new TaskSpec(Instant.now(), schedule, initialDelay, period, unit, taskTrigger));
-			var afut = taskInfo.get(id).future;
-			
-			var rfut = new AbstractDelegateScheduledFuture<>(id, ftr, dtask.classifiers()) {
-
-				@Override
-				public int compareTo(Delayed other) {
-					return ((ScheduledFuture<?>)afut).compareTo(other);
-				}
-
-				@Override
-				public long getDelay(TimeUnit unit) {
-					return ((ScheduledFuture<?>)afut).getDelay(unit);
-				}
-
-				@Override
-				public TaskInfo info() {
-					return taskInfo.get(id);
-				}
-
-			};
-			returnedFutures.put(id, rfut);
-			return (ScheduledFuture<V>) rfut;
+			return (ScheduledFuture<V>)doSubmit(id, dtask, new TaskSpec(Instant.now(), schedule, initialDelay, period, unit, taskTrigger));
 		} else {
 			if(alwaysDistribute) {
 				if(command instanceof SerializableRunnable sr)
@@ -1354,7 +1278,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 							payloadFilter.filter(command).run();
 						}
 						finally {
-							returnedFutures.remove(id);
+							localFutures.remove(id);
 						}
 					}, initialDelay, unit);
 					break;
@@ -1370,7 +1294,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				var rfut = new DelegatedScheduledFuture<>(id, sfut, Collections.emptySet()) {
 					@Override
 					public boolean cancel(boolean mayInterrupt) {
-						returnedFutures.remove(id);
+						localFutures.remove(id);
 						return super.cancel(mayInterrupt);
 					}
 
@@ -1380,12 +1304,13 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					}
 				};
 
-				returnedFutures.put(id, rfut);
+				localFutures.put(id, rfut);
 				return sfut;
 			}
 		}
 	}
 
+	@SuppressWarnings("unchecked")
 	private <T> Future<T> doSubmit(ClusterID id, DistributedTask<?> task, TaskSpec spec) {
 
 		if(task.affinity() == Affinity.LOCAL) {
@@ -1419,7 +1344,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				
 				var req = new Request(Request.Type.SUBMIT, id, new SubmitPayload((DistributedTask<?>) task, spec));
 				sendExecuteRequest(null, req);
-				return new EntryFuture<T>(id, entry);
+				return (Future<T>) taskInfo.get(id).userFuture;
 			} catch (Exception ex) {
 				if(prevTask == null)
 					tasks.remove(id);
@@ -1468,6 +1393,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		synchronized(taskInfo) {
 			var handler = new RemoteHandler(entry);
 			var now = Instant.now();
+			var offset = Instant.now().toEpochMilli() - entry.spec.submitted().toEpochMilli();
 			ScheduledFuture<?> future = null;
 			switch (entry.spec.schedule()) {
 			case TRIGGER:
@@ -1489,26 +1415,38 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				delegate.execute(handler);
 				break;
 			case ONE_SHOT:
+			{
 				if(LOG.isDebugEnabled()) {
-					LOG.debug("Scheduling {} {} [] with {} from {} in {} {}", entry.spec.schedule(), entry.id, entry.task.id(), entry.task.affinity(),
-							entry.submitter, entry.spec.initialDelay(), entry.spec.unit());
+					LOG.debug("Scheduling {} {} [] with {} from {} in {} {} (Offset is {}ms)", entry.spec.schedule(), entry.id, entry.task.id(), entry.task.affinity(),
+							entry.submitter, entry.spec.initialDelay(), entry.spec.unit(), offset);
 				}
-				future = delegate.schedule(handler, entry.spec.initialDelay(), entry.spec.unit());
+				var msdely = Math.max(0l,  entry.spec.unit().toMillis(entry.spec.initialDelay()) - offset);
+				future = delegate.schedule(handler, msdely, TimeUnit.MILLISECONDS);
 				break;
+			}
 			case FIXED_DELAY:
+			{
 				if(LOG.isDebugEnabled()) {
-					LOG.debug("Scheduling {} {} [] with {} from {} in {} {} after {} {}", entry.spec.schedule(), entry.id, entry.task.id(),
-							entry.task.affinity(), entry.submitter, entry.spec.period(), entry.spec.unit(), entry.spec.initialDelay(), entry.spec.unit());
+					LOG.debug("Scheduling {} {} [] with {} from {} in {} {} after {} {} (Offset is {}ms)", entry.spec.schedule(), entry.id, entry.task.id(),
+							entry.task.affinity(), entry.submitter, entry.spec.period(), entry.spec.unit(), entry.spec.initialDelay(), entry.spec.unit(), offset);
 				}
-				future = delegate.scheduleWithFixedDelay(handler, entry.spec.initialDelay(), entry.spec.period(), entry.spec.unit());
+			
+				var msdely = Math.max(0l,  entry.spec.unit().toMillis(entry.spec.initialDelay()) - offset);
+				var msdur = entry.spec.unit().toMillis(entry.spec.period()); 
+				future = delegate.scheduleWithFixedDelay(handler, msdely, msdur, TimeUnit.MILLISECONDS);
 				break;
+			}
 			case FIXED_RATE:
+			{
 				if(LOG.isDebugEnabled()) {
-					LOG.debug("Scheduling {} {} [] with {} from {} in {} {} after {} {}", entry.spec.schedule(), entry.id, entry.task.id(),
-							entry.task.affinity(), entry.submitter, entry.spec.period(), entry.spec.unit(), entry.spec.initialDelay(), entry.spec.unit());
+					LOG.debug("Scheduling {} {} [] with {} from {} in {} {} after {} {} (Offset is {}ms)", entry.spec.schedule(), entry.id, entry.task.id(),
+							entry.task.affinity(), entry.submitter, entry.spec.period(), entry.spec.unit(), entry.spec.initialDelay(), entry.spec.unit(), offset);
 				}
-				future = delegate.scheduleAtFixedRate(handler, entry.spec.initialDelay(), entry.spec.period(), entry.spec.unit());
+				var msdely = Math.max(0l,  entry.spec.unit().toMillis(entry.spec.initialDelay()) - offset);
+				var msdur = entry.spec.unit().toMillis(entry.spec.period()); 
+				future = delegate.scheduleAtFixedRate(handler, msdely, msdur, TimeUnit.MILLISECONDS);
 				break;
+			}
 			default:
 				throw new IllegalArgumentException();
 			}
@@ -1516,7 +1454,29 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			if(LOG.isDebugEnabled()) {
 				LOG.debug("Scheduled {}", entry.id);
 			}
-			taskInfo.put(entry.id, new TaskInfo(now, future, taskInfo.get(entry.id)));
+			
+			var tinfo = new TaskInfo(entry.spec, now, future, taskInfo.get(entry.id));
+			var efuture = new EntryFuture<Object>(entry);
+			var ffuture = future;
+			var foffset = offset;
+			tinfo.userFuture = new AbstractDelegateScheduledFuture<>(entry.id, (Future<Object>)efuture, entry.task.classifiers()) {
+				@Override
+				public TaskInfo info() {
+					return tinfo;
+				}
+
+				@Override
+				public long getDelay(TimeUnit unit) {
+					return Math.max(0l, ffuture.getDelay(unit) - foffset);
+				}
+
+				@Override
+				public int compareTo(Delayed o) {
+					return ffuture.compareTo(o);
+				}
+			};
+			
+			taskInfo.put(entry.id, tinfo);
 		}
 	}
 
@@ -1533,7 +1493,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			if(was != null) {
 				var tinfo = taskInfo.get(id);
 				if(tinfo != null) {
-					tinfo.future.cancel(true);
+					tinfo.underlyingFuture.cancel(true);
 				}
 			}
 			tasks.put(id, entry);
@@ -1638,9 +1598,10 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		if(!taskStore.isPresent() && wasRank == 0) {
 			LOG.info("I was leader, handling new member {}. I know about {} tasks", mbr, tasks.size());
 			for (Map.Entry<ClusterID, TaskEntry> entry : tasks.entrySet()) {
-				var task = (DistributedTask<?>) entry.getValue().task;
-				var spec = entry.getValue().spec.adjustTimes();
-				var req = new Request(Request.Type.SUBMIT, entry.getKey(), new SubmitPayload(task, spec));
+				var value = entry.getValue();
+				var task = (DistributedTask<?>) value.task;
+				LOG.info("   Sending {} [{}]", value.id(), entry.getKey());
+				var req = new Request(Request.Type.SUBMIT, value.id(), new SubmitPayload(task, value.spec));
 				try {
 					sendExecuteRequest(mbr, req);
 				} catch (Exception ioe) {
@@ -1717,10 +1678,9 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			LOG.debug("Received REMOVE for {} from {}", req.id(), sender);
 		}
 		tasks.remove(req.id());
-		returnedFutures.remove(req.id());
 		var tinfo = taskInfo.remove(req.id());
-		if(tinfo != null && tinfo.future != null) {
-			tinfo.future.cancel(false);
+		if(tinfo != null && tinfo.underlyingFuture != null) {
+			tinfo.underlyingFuture.cancel(false);
 		}
 		
 		if(LOG.isDebugEnabled()) {
@@ -1909,7 +1869,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				throw new IllegalStateException();
 			}
 			
-			taskInfo.put(id, new TaskInfo(now, fut, taskInfo.get(id)));
+			taskInfo.put(id, new TaskInfo(spec, now, fut, taskInfo.get(id)));
 			
 			return fut;
 		}
