@@ -80,6 +80,7 @@ public class SpringGardenSchedConfig {
 		return new DistributedScheduledExecutor.Builder().
 				withPayloadSerializer(payloadSerializer).
 				withPayloadFilter(payloadFilter).
+				withCloseTimeout(Duration.ofSeconds(1)).
 				withAcknowledgeTimeout(Duration.ofMinutes(30)). // Helps debugging
 				build();
 	}

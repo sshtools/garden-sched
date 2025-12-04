@@ -56,8 +56,9 @@ import org.jgroups.util.Util;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.sshtools.gardensched.Request.AckPayload;
 import com.sshtools.gardensched.Request.EventPayload;
-import com.sshtools.gardensched.Request.ExecutePayload;
+import com.sshtools.gardensched.Request.SubmitPayload;
 import com.sshtools.gardensched.Request.LockPayload;
 import com.sshtools.gardensched.Request.ProgressMessagePayload;
 import com.sshtools.gardensched.Request.ProgressPayload;
@@ -211,13 +212,13 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 
 		@Override
-		public void run() {
-			TaskInfo tinfo;
-			synchronized(taskInfo) {
-				tinfo = taskInfo.get(id);
-				tinfo.lastExecuted = Optional.of(Instant.now());
-				tinfo.active = true;
+		public final void run() {
+
+			if(LOG.isDebugEnabled()) {
+				LOG.debug("Handling {} [{}]", id, task.affinity());
 			}
+			
+			TaskInfo tinfo = taskInfo.get(id);
 			
 			var retry = new AtomicLong(Integer.MIN_VALUE);
 			var cancel = new AtomicBoolean();
@@ -225,37 +226,8 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				
 				TaskContext.ctx.set(new TaskContext() {
 					
-					private final TaskProgress progress = new TaskProgress() {
-						
-						@Override
-						public void start(long max) {
-							queue.submit(() -> {
-								sendRequest(null, new Request(Type.START_PROGRESS, id, new StartProgressPayload(max)));
-							});
-						}
-						
-						@Override
-						public void progress(long value) {
-							queue.submit(() -> {
-								sendRequest(null, new Request(Type.PROGRESS, id, new ProgressPayload(value)));
-							});
-						}
-						
-						@Override
-						public void message(String bundle, String key, String... args) {
-							queue.submit(() -> {
-								sendRequest(null, new Request(Type.PROGRESS_MESSAGE, id, new ProgressMessagePayload(bundle, key, args)));
-							});
-						}
-						
-						@Override
-						public void message(String text) {
-							queue.submit(() -> {
-								sendRequest(null, new Request(Type.PROGRESS_MESSAGE, id, new ProgressMessagePayload(text)));
-							});
-						}
-					};
-					
+					private final TaskProgress progress = createProgress(tinfo);
+
 					@Override
 					public TaskProgress progress() {
 						return progress;
@@ -278,7 +250,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					}
 				});
 				
-				doTask(new TaskCompletionContext() {
+				doTask(tinfo, new TaskCompletionContext() {
 					
 					@Override
 					public void cancel() {
@@ -293,8 +265,6 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			}
 			finally {
 				TaskContext.ctx.remove();
-				tinfo.lastCompleted = Optional.of(Instant.now());
-				tinfo.active = false;
 				
 				if(cancel.get()) {
 					LOG.info("Cancelling {} because error handling requested it.", id);
@@ -319,31 +289,32 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 		}
 		
-		protected Object doTask(TaskCompletionContext taskCompletionContext) {
+		protected abstract TaskProgress createProgress(TaskInfo tinfo);
+		
+		protected Object doTask(TaskInfo taskInfo, TaskCompletionContext taskCompletionContext) {
 			Object result = null;
+			taskInfo.lastExecuted = Optional.of(Instant.now());
+			taskInfo.active = true;
 			try {
 				if(LOG.isDebugEnabled()) {
 					LOG.debug("Executing {}", id);
 				}
 				result = doRunTask();
-
-				synchronized(taskInfo) {
-					Optional.ofNullable(taskInfo.get(id)).ifPresent(ti -> ti.lastError = Optional.empty());
-				} 
+				taskInfo.lastError = Optional.empty();
 				taskSuccessHandler.ifPresent(te -> {
 					te.handleSuccess(id, taskSpec, task, taskCompletionContext);
 				});
 			} catch (Throwable t) {
 				LOG.error("Failed executing {}", id, t);
 				result = t;
-
-				synchronized(taskInfo) {
-					Optional.ofNullable(taskInfo.get(id)).ifPresent(ti -> ti.lastError = Optional.of(t));
-				}
-				
+				taskInfo.lastError = Optional.of(t);
 				taskErrorHandler.ifPresent(te -> {
 					te.handleError(id, taskSpec, task, taskCompletionContext, t);
 				});
+			} finally {
+				taskInfo.lastCompleted = Optional.of(Instant.now());
+				taskInfo.progress = Optional.empty();
+				taskInfo.active = false;
 			}
 			return result;
 		}
@@ -487,6 +458,32 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 
 		@Override
+		protected TaskProgress createProgress(TaskInfo tinfo) {
+			return new TaskProgress() {
+				
+				@Override
+				public void start(long max) {
+					tinfo.maxProgress = Optional.of(max);
+				}
+				
+				@Override
+				public void progress(long value) {
+					tinfo.progress = Optional.of(value);
+				}
+				
+				@Override
+				public void message(String bundle, String key, String... args) {
+					tinfo.message(bundle, key, args);
+				}
+				
+				@Override
+				public void message(String text) {
+					tinfo.message(text);
+				}
+			};
+		}
+
+		@Override
 		protected void noRetrigger() {
 			taskInfo.remove(id);
 		}
@@ -524,20 +521,53 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 
 		@Override
-		public void run() {
-			if(LOG.isDebugEnabled()) {
-				LOG.debug("Handling {} [{}]", id, task.affinity());
-			}
-			super.run();
+		protected TaskProgress createProgress(TaskInfo tinfo) {
+			return new TaskProgress() {
+				
+				@Override
+				public void start(long max) {
+					tinfo.maxProgress = Optional.of(max);
+					queue.submit(() -> {
+						sendRequest(null, new Request(Type.START_PROGRESS, id, new StartProgressPayload(max)));
+					});
+				}
+				
+				@Override
+				public void progress(long value) {
+					tinfo.progress = Optional.of(value);
+					queue.submit(() -> {
+						sendRequest(null, new Request(Type.PROGRESS, id, new ProgressPayload(value)));
+					});
+				}
+				
+				@Override
+				public void message(String bundle, String key, String... args) {
+					tinfo.message(bundle, key, args);
+					queue.submit(() -> {
+						sendRequest(null, new Request(Type.PROGRESS_MESSAGE, id, new ProgressMessagePayload(bundle, key, args)));
+					});
+				}
+				
+				@Override
+				public void message(String text) {
+					tinfo.message(text);
+					queue.submit(() -> {
+						sendRequest(null, new Request(Type.PROGRESS_MESSAGE, id, new ProgressMessagePayload(text)));
+					});
+				}
+			};
 		}
-
+		
 		@Override
-		protected Object doTask(TaskCompletionContext taskErrorContext) {
+		protected Object doTask(TaskInfo taskInfo, TaskCompletionContext taskErrorContext) {
 			Serializable result =  null;
 			switch (task.affinity()) {
 			case ALL:
 			case MEMBER:
-				result = (Serializable) super.doTask(taskErrorContext);
+				queue.submit(() -> {
+					sendRequest(null, new Request(Type.EXECUTING, id));
+				});
+				result = (Serializable) super.doTask(taskInfo, taskErrorContext);
 				break;
 			case THIS:
 				if (entry.submitter.equals(ch.getAddress())) {
@@ -546,7 +576,10 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 								"Running task {} [{}] on this node because its affinity is {} and it was scheduled on this node.",
 								id, task.id(), task.affinity());
 					}
-					result = (Serializable) super.doTask(taskErrorContext);
+					queue.submit(() -> {
+						sendRequest(null, new Request(Type.EXECUTING, id));
+					});
+					result = (Serializable) super.doTask(taskInfo, taskErrorContext);
 				}
 				else {
 					return null;
@@ -559,7 +592,10 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 								"Running task {} [{}] on this node because its affinity is {} and it's rank of {} matches.",
 								id, task.id(), task.affinity(), rank);
 					}
-					result = (Serializable) super.doTask(taskErrorContext);
+					queue.submit(() -> {
+						sendRequest(null, new Request(Type.EXECUTING, id));
+					});
+					result = (Serializable) super.doTask(taskInfo, taskErrorContext);
 				} else {
 					if(LOG.isDebugEnabled()) {
 						LOG.debug(
@@ -572,7 +608,16 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			default:
 				throw new IllegalStateException("Unexpected affinity " + task.affinity());
 			}
-			sendRequest(entry.submitter, new Request(Request.Type.RESULT, id, new ResultPayload(result)));
+
+			var rp = new ResultPayload(result);
+			
+			try {
+				acks.runWithAck(Request.Type.RESULT, id, clusterSize, () -> {
+					sendRequest(null, new Request(Request.Type.RESULT, id, rp));
+				});
+			} catch (Exception e) {
+				LOG.error("Failed to broadcast result for {}.", id, e);
+			}
 			return result;
 		}
 
@@ -593,13 +638,13 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 						msg.getOffset(), msg.getLength());
 				switch (req.type()) {
 				case START_PROGRESS:
-					handleStartProgress(req);
+					handleStartProgress(msg.getSrc(), req);
 					break;
 				case PROGRESS:
-					handleProgress(req);
+					handleProgress(msg.getSrc(), req);
 					break;
 				case PROGRESS_MESSAGE:
-					handleProgressMessage(req);
+					handleProgressMessage(msg.getSrc(), req);
 					break;
 				case EVENT:
 					handleEvent(msg.getSrc(), req);
@@ -616,46 +661,24 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				case UNLOCKED:
 					handleUnlocked(req);
 					break;
-				case REMOVED:
-					handleRemoved(msg.getSrc(), req);
+				case ACK:
+					acks.ack(((AckPayload)req.payload()).type(), req.id());
 					break;
-				case EXECUTE:
-					handleExecute(req.id(), msg.getSrc(), ((ExecutePayload)req.payload()).task(), ((ExecutePayload)req.payload()).spec());
+				case SUBMIT:
+					handleSubmit(req.id(), msg.getSrc(), ((SubmitPayload)req.payload()).task(), ((SubmitPayload)req.payload()).spec());
 					break;
-				case EXECUTED:
-					handleExecuted(req);
+				case EXECUTING:
+					handleExecuting(msg.getSrc(), req);
 					break;
 				case RESULT:
-					var entry = tasks.get(req.id());
-
+					var id = req.id();
+					var entry = tasks.get(id);
 					if (entry == null) {
-						LOG.error("Found no entry for request {}", req.id());
-						queue.execute(() -> removeRequest(req.id()));
+						LOG.error("Received result for task I don't know about, {}", id);
 					} else {
-						var responsesLeft = entry.results.addAndGet(-1);
-						if (responsesLeft == 0) {
-							if (LOG.isDebugEnabled()) {
-								LOG.debug("No more responses to {} expected, completing.", req.id());
-							}
-							entry.promise.setResult(((ResultPayload)req.payload()).result());
-
-							if(entry.spec().schedule() == Schedule.TRIGGER) {
-								if (LOG.isDebugEnabled()) {
-									LOG.debug("Leaving task in place as it is not a TRIGGER and it has completed.", req.id());
-								}
-							}
-							else {
-								if (LOG.isDebugEnabled()) {
-									LOG.debug("Removing task as it is not a TRIGGER and it has completed.", req.id());
-								}
-								queue.execute(() -> removeRequest(req.id()));
-							}
-						} else {
-							if (LOG.isDebugEnabled()) {
-								LOG.debug("Waiting for {} more responses to {}.", responsesLeft, req.id());
-							}
-						}
+						entryResults(id, entry, ((ResultPayload)req.payload()).result());
 					}
+					sendRequest(msg.getSrc(), new Request(Request.Type.ACK, req.id(), new AckPayload(Request.Type.RESULT)));
 					break;
 				case REMOVE:
 					handleRemove(msg.getSrc(), req);
@@ -687,7 +710,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	public static PayloadFilter currentFilter() {
 		return fltr.get();
 	}
-	
+
 	public static PayloadSerializer currentSerializer() {
 		return srlzr.get();
 	}
@@ -697,8 +720,6 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	private final ScheduledExecutorService delegate;
 	private final ConcurrentMap<ClusterID, TaskEntry> tasks = new ConcurrentHashMap<>();
 	private final LockProvider lockProvider;
-	private final Map<ClusterID, Semaphore> removeAcks = new ConcurrentHashMap<>();
-	private final Map<ClusterID, Semaphore> executeAcks = new ConcurrentHashMap<>();
 	private final ConcurrentMap<ClusterID, TaskInfo> taskInfo = new ConcurrentHashMap<>();
 	private final ConcurrentMap<ClusterID, IdentifiableFuture<?>> returnedFutures = new ConcurrentHashMap<>();
 	private final ExecutorService queue;
@@ -714,6 +735,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	private final boolean deferStorageUntilStarted;
 	private final List<TaskEntry> deferredStorage = new ArrayList<>();
 	private final AtomicBoolean started = new AtomicBoolean();
+	private final Ack acks;
 	
 	private View view;
 	private int rank = -1;
@@ -742,6 +764,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		restoreTasksAtStartup = bldr.restoreTasksAtStartup;
 		taskStore.ifPresent(ts -> ts.initialise(this));
 		deferStorageUntilStarted = bldr.deferStorageUntilStarted;
+		acks = new Ack(acknowledgeTimeout);
 		
 		ch = new JChannel(bldr.props);
 		ch.name(bldr.groupName);
@@ -893,6 +916,10 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	
 	public LockProvider lockProvider() {
 		return lockProvider;
+	}
+	
+	public boolean leader() {
+		return rank == 0;
 	}
 	
 	public int rank() {
@@ -1376,8 +1403,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					LOG.debug("Is a {}, submitting {} [{}] to cluster with classifiers `{}`.", DistributedCallable.class.getName(), id, spec, String.join(", ", task.classifiers()));
 				}
 				
-				var expectResults = task.affinity() == Affinity.ALL ? clusterSize : 1;
-				var entry = new TaskEntry(id, task, ch.getAddress(), expectResults, spec);
+				var entry = new TaskEntry(id, task, ch.getAddress(), spec);
 				tasks.put(id, entry);
 				
 				if(task.persistent().orElse(persistentByDefault)) {
@@ -1391,7 +1417,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					});
 				}
 				
-				var req = new Request(Request.Type.EXECUTE, id, new ExecutePayload((DistributedTask<?>) task, spec));
+				var req = new Request(Request.Type.SUBMIT, id, new SubmitPayload((DistributedTask<?>) task, spec));
 				sendExecuteRequest(null, req);
 				return new EntryFuture<T>(id, entry);
 			} catch (Exception ex) {
@@ -1407,6 +1433,34 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			throw new UncheckedIOException(ioe);
 		} catch (Exception e) {
 			throw new IllegalStateException(e);
+		}
+	}
+
+	private void entryResults(ClusterID id, TaskEntry entry, Serializable result) {
+		var responsesReceived = entry.results.addAndGet(1);
+		var expectedResults = expectedResults(entry.task.affinity());
+		if (responsesReceived >= expectedResults) {
+			if (LOG.isDebugEnabled()) {
+				LOG.debug("No more responses to {} expected, completing.", id);
+			}
+			entry.promise.setResult(result);
+
+			if(entry.spec().schedule().repeats()) {
+				if (LOG.isDebugEnabled()) {
+					LOG.debug("Leaving task {} in place as {} REPEATS and it has completed.", id, entry.spec().schedule());
+				}
+				entry.results.set(0);
+			}
+			else {
+				if (LOG.isDebugEnabled()) {
+					LOG.debug("Removing task {} as {} does not REPEAT and it has completed.", id, entry.spec().schedule());
+				}
+				queue.execute(() -> removeRequest(id));
+			}
+		} else {
+			if (LOG.isDebugEnabled()) {
+				LOG.debug("Received response {} of {}. Waiting for {} more responses to {}.", responsesReceived,  expectedResults,  expectedResults - responsesReceived, id);
+			}
 		}
 	}
 
@@ -1472,8 +1526,8 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 	}
 
-	private void handleExecute(ClusterID id, Address sender, DistributedTask<?> task, TaskSpec spec) {
-		var entry = new TaskEntry(id, task, sender, 1, spec);
+	private void handleSubmit(ClusterID id, Address sender, DistributedTask<?> task, TaskSpec spec) {
+		var entry = new TaskEntry(id, task, sender, spec);
 		synchronized(tasks) {
 			var was = tasks.get(id);
 			if(was != null) {
@@ -1490,24 +1544,9 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 
 		if(LOG.isDebugEnabled()) {
-			LOG.debug("Sending EXECUTED for {}", id);
+			LOG.debug("Sending SUBMIT ACK for {}", id);
 		}
-		sendRequest(sender, new Request(Request.Type.EXECUTED, id));
-	}
-
-	private void handleExecuted(Request req) {
-		if(LOG.isDebugEnabled()) {
-			LOG.debug("Received EXECUTED ack for {}", req.id());
-		}
-		var ack = executeAcks.get(req.id());
-		if(ack == null)
-			LOG.warn("Timed out waiting for EXECUTED ack.");
-		else
-			ack.release();
-
-		if(LOG.isDebugEnabled()) {
-			LOG.debug("Released 1 semaphore {}", req.id());
-		}
+		sendRequest(sender, new Request(Request.Type.ACK, id, new AckPayload(Request.Type.SUBMIT)));
 	}
 
 	private void handleLeftMember(Address mbr) {
@@ -1596,12 +1635,12 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		 * 
 		 *  None of this happens if there is shared task storage
 		 */
-		if(taskStore.isPresent() && wasRank == 0) {
+		if(!taskStore.isPresent() && wasRank == 0) {
 			LOG.info("I was leader, handling new member {}. I know about {} tasks", mbr, tasks.size());
 			for (Map.Entry<ClusterID, TaskEntry> entry : tasks.entrySet()) {
 				var task = (DistributedTask<?>) entry.getValue().task;
 				var spec = entry.getValue().spec.adjustTimes();
-				var req = new Request(Request.Type.EXECUTE, entry.getKey(), new ExecutePayload(task, spec));
+				var req = new Request(Request.Type.SUBMIT, entry.getKey(), new SubmitPayload(task, spec));
 				try {
 					sendExecuteRequest(mbr, req);
 				} catch (Exception ioe) {
@@ -1612,7 +1651,10 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		
 	}
 
-	private void handleStartProgress(Request req) {
+	private void handleStartProgress(Address sender, Request req) {
+		if(sender.equals(address()))
+			return;
+			
 		if(LOG.isDebugEnabled()) {
 			LOG.debug("Received START_PROGRESS for {}", req.id());
 		}
@@ -1623,7 +1665,10 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 	}
 
-	private void handleProgressMessage(Request req) {
+	private void handleProgressMessage(Address sender, Request req) {
+		if(sender.equals(address()))
+			return;
+		
 		if(LOG.isDebugEnabled()) {
 			LOG.debug("Received PROGRESS_MESSAGE for {}", req.id());
 		}
@@ -1637,10 +1682,29 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 	}
 
-	private void handleProgress(Request req) {
+	private void handleExecuting(Address sender, Request req) {
+		if(sender.equals(address()))
+			return;
+		
+		if(LOG.isDebugEnabled()) {
+			LOG.debug("Received EXECUTING for {}", req.id());
+		}
+		
+		var tinfo = taskInfo.get(req.id());
+		if(tinfo != null) {
+			tinfo.lastExecuted = Optional.of(Instant.now());
+			tinfo.active = true;
+		}
+	}
+
+	private void handleProgress(Address sender, Request req) {
+		if(sender.equals(address()))
+			return;
+		
 		if(LOG.isDebugEnabled()) {
 			LOG.debug("Received PROGRESS for {}", req.id());
 		}
+		
 		ProgressPayload sp = req.payload(); 
 		var tinfo = taskInfo.get(req.id());
 		if(tinfo != null) {
@@ -1662,22 +1726,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		if(LOG.isDebugEnabled()) {
 			LOG.debug("Sending REMOVED to {}", sender);
 		}
-		sendRequest(sender, new Request(Request.Type.REMOVED, req.id()));
-	}
-
-	private void handleRemoved(Address sender, Request req) {
-		if(LOG.isDebugEnabled()) {
-			LOG.debug("Received REMOVED ack for {} from {}", req.id(), sender);
-		}
-		var ack = removeAcks.get(req.id());
-		if(ack == null)
-			LOG.warn("Timed out waiting for REMOVED ack.");
-		else
-			ack.release();
-		
-		if(LOG.isDebugEnabled()) {
-			LOG.debug("Released 1 semaphore {}", req.id());
-		}
+		sendRequest(sender, new Request(Request.Type.ACK, req.id(), new AckPayload(Request.Type.REMOVE)));
 	}
 
 	private void handleUnlock(Request req) {
@@ -1719,29 +1768,14 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		if(LOG.isDebugEnabled()) {
 			LOG.debug("Sending remove request {} ({} in cluster right now)", id, clusterSize);
 		}
-		var sem = new Semaphore(clusterSize);
+		
 		try {
-			sem.acquire(clusterSize);
-			removeAcks.put(id, sem);
-			
-			sendRequest(null, new Request(Request.Type.REMOVE, id));
-			
-			/* Wait for everyone to acknowledge via REMOVED */
-			if(LOG.isDebugEnabled()) {
-				LOG.debug("Waiting for {} nodes to acknowledge removal", clusterSize);
-			}
-			if (sem.tryAcquire(clusterSize, acknowledgeTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
-				if(LOG.isDebugEnabled()) {
-					LOG.debug("All {} nodes acknowledged removal", clusterSize);
-				}
-			}
-			else {
-				LOG.warn("{} nodes did not reply, perhaps a node went down, ignoring.",  clusterSize - sem.availablePermits());
-			}
+			acks.runWithAck(Request.Type.REMOVE, id, clusterSize, () -> {
+				sendRequest(null, new Request(Request.Type.REMOVE, id));
+			});
 		} catch (Exception e) {
 			LOG.error("Failed multicasting REMOVE request", e);
 		} finally {
-			removeAcks.remove(id);
 			taskStore.ifPresent(ts -> ts.remove(id, tsk.task.classifiers()));
 		}
 	}
@@ -1749,26 +1783,9 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	private void sendExecuteRequest(Address mbr, Request req)
 			throws IOException, Exception {
 		var acksReqd = mbr == null ? clusterSize : 1;
-		var sem = new Semaphore(acksReqd);
-		sem.acquire(acksReqd);
-		try {
-			executeAcks.put(req.id(), sem);
+		acks.runWithAck(Request.Type.SUBMIT, req.id(), acksReqd, () -> {
 			sendRequest(mbr, req);
-			
-			/* Wait for everyone to acknowledge via EXECUTED */
-			if (!sem.tryAcquire(acksReqd, acknowledgeTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
-				LOG.warn("{} nodes did not reply, perhaps a node went down, ignoring.",
-						acksReqd - sem.availablePermits());
-			}
-			else { 
-				if(LOG.isDebugEnabled()) {
-					LOG.debug("Acknowledged {}", req.id());
-				}
-			}
-		}
-		finally {
-			executeAcks.remove(req.id());
-		}
+		});
 	}
 
 	private void sendRequest(Address sender, Request repreq) {
@@ -1895,6 +1912,15 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			taskInfo.put(id, new TaskInfo(now, fut, taskInfo.get(id)));
 			
 			return fut;
+		}
+	}
+	
+	private int expectedResults(Affinity affinity) {
+		switch(affinity) {
+		case ALL:
+			return clusterSize;
+		default:
+			return 1;
 		}
 	}
 }

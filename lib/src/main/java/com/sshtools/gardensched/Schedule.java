@@ -16,5 +16,18 @@
 package com.sshtools.gardensched;
 
 public enum Schedule {
-	NOW, ONE_SHOT, FIXED_RATE, FIXED_DELAY, TRIGGER
+	NOW, ONE_SHOT, FIXED_RATE, FIXED_DELAY, TRIGGER;
+
+	boolean repeats() {
+		switch(this) {
+		case FIXED_DELAY:
+		case FIXED_RATE:
+			return true;
+		case TRIGGER:
+			/* TODO does it though? always? */
+			return true;
+		default:
+			return false;
+		}
+	}
 }

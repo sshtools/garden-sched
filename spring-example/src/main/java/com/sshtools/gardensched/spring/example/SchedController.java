@@ -39,6 +39,46 @@ public class SchedController implements BroadcastEventListener {
 		distributedScheduledExecutor.addBroadcastListener(this);
 	}
 	
+	@RequestMapping(value = "/list-jobs", method = RequestMethod.GET, produces = { "text/html" })
+	@ResponseBody
+	@ResponseStatus(value = HttpStatus.OK)
+	public String listJobs(HttpServletRequest request,
+			HttpServletResponse response) {
+		
+		var top = 
+			"""
+			<html>
+			<body>
+			<table>
+			""";
+		
+		var middle = "";
+		for(var future : distributedScheduledExecutor.futures()) {
+			var row = """
+					<tr>
+						<td>%1</td>
+						<td>%2</td>
+						<td>%3</td>
+					</tr>
+					""".
+					replace("%1", future.clusterID().toString()).
+					replace("%2", future.info().active() ? "Active" : "Idle").
+					replace("%3", String.join(", ", future.classifiers()));
+			middle += row;
+		}
+		
+		var bottom = 
+			"""
+			</table>
+			</body>
+			</html>
+			""";
+		
+		return top +
+			   middle +
+			   bottom;
+	}
+	
 	@RequestMapping(value = "/start-simple-job", method = RequestMethod.GET, produces = { "text/plain" })
 	@ResponseBody
 	@ResponseStatus(value = HttpStatus.OK)
@@ -85,6 +125,32 @@ public class SchedController implements BroadcastEventListener {
 		var  job = new TestJob("Hello Trigger", 123);
 		
 		distributedScheduledExecutor.schedule(DistributedRunnable.of(job), new TriggerAdapter(new CronTrigger("0 * * * * *")));
+		
+		return "Job Started";
+	}
+	
+	@RequestMapping(value = "/start-fixed-delay", method = RequestMethod.GET, produces = { "text/plain" })
+	@ResponseBody
+	@ResponseStatus(value = HttpStatus.OK)
+	public String startFixedDelay(HttpServletRequest request,
+			HttpServletResponse response) {
+		
+		var  job = new TestJob("Hello Fixed Delay", 123);
+		
+		distributedScheduledExecutor.scheduleWithFixedDelay(DistributedRunnable.of(job), 5, 5, TimeUnit.SECONDS);
+		
+		return "Job Started";
+	}
+	
+	@RequestMapping(value = "/start-fixed-rate", method = RequestMethod.GET, produces = { "text/plain" })
+	@ResponseBody
+	@ResponseStatus(value = HttpStatus.OK)
+	public String startFixedRate(HttpServletRequest request,
+			HttpServletResponse response) {
+		
+		var  job = new TestJob("Hello Fixed Rate", 123);
+		
+		distributedScheduledExecutor.scheduleAtFixedRate(DistributedRunnable.of(job), 5, 5, TimeUnit.SECONDS);
 		
 		return "Job Started";
 	}

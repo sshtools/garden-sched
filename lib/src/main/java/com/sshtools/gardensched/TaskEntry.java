@@ -25,15 +25,14 @@ public class TaskEntry {
 	final DistributedTask<?> task;
 	final Address submitter;
 	final Promise<Object> promise = new Promise<>();
-	final AtomicInteger results;
+	final AtomicInteger results = new AtomicInteger();
 	final TaskSpec spec;
 	final ClusterID id;
 
-	public TaskEntry(ClusterID id, DistributedTask<?> task, Address submitter, int expectedResults, TaskSpec spec) {
+	public TaskEntry(ClusterID id, DistributedTask<?> task, Address submitter, TaskSpec spec) {
 		this.task = task;
 		this.id = id;
 		this.submitter = submitter;
-		this.results = new AtomicInteger(expectedResults);
 		this.spec = spec;
 	}
 	
@@ -53,11 +52,8 @@ public class TaskEntry {
 		return promise;
 	}
 
-	public AtomicInteger results() {
-		return results;
-	}
-
 	public TaskSpec spec() {
 		return spec;
 	}
+
 }

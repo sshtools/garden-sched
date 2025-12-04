@@ -29,7 +29,33 @@ import com.sshtools.gardensched.DistributedRunnable.DistributedRunnableImpl;
 
 public class Request implements Streamable {
 	public enum Type {
-		EXECUTE, EXECUTED, RESULT, REMOVE, REMOVED, UNLOCK, LOCK, LOCKED, UNLOCKED, EVENT, START_PROGRESS, PROGRESS, PROGRESS_MESSAGE
+		SUBMIT, EXECUTING, RESULT, REMOVE, UNLOCK, UNLOCKED, LOCK, LOCKED,EVENT, START_PROGRESS, PROGRESS, PROGRESS_MESSAGE, ACK
+	}
+	
+	public final static class AckPayload implements Streamable {
+
+		private Type type;
+
+		public AckPayload() { }
+		
+		public AckPayload(Type type) {
+			super();
+			this.type = type;
+		}
+
+		public Type type() {
+			return type;
+		}
+
+		@Override
+		public void writeTo(DataOutput out) throws IOException {
+			out.writeUTF(type.name());
+		}
+
+		@Override
+		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
+			type = Type.valueOf(in.readUTF());
+		}
 	}
 	
 	public final static class ResultPayload implements Streamable {
@@ -209,13 +235,13 @@ public class Request implements Streamable {
 		
 	}
 
-	public final static class ExecutePayload implements Streamable {
+	public final static class SubmitPayload implements Streamable {
 		private DistributedTask<?> task;
 		private TaskSpec spec;
 		
-		public ExecutePayload() {}
+		public SubmitPayload() {}
 
-		public ExecutePayload(DistributedTask<?> task, TaskSpec spec) {
+		public SubmitPayload(DistributedTask<?> task, TaskSpec spec) {
 			super();
 			this.task = task;
 			this.spec = spec;
@@ -333,8 +359,8 @@ public class Request implements Streamable {
 		case EVENT:
 			payload = new EventPayload();
 			break;
-		case EXECUTE:
-			payload = new ExecutePayload();
+		case SUBMIT:
+			payload = new SubmitPayload();
 			break;
 		case LOCK:
 		case LOCKED:
@@ -353,6 +379,9 @@ public class Request implements Streamable {
 			break;
 		case PROGRESS_MESSAGE:
 			payload = new ProgressMessagePayload();
+			break;
+		case ACK:
+			payload = new AckPayload();
 			break;
 		default:
 			payload = null;
