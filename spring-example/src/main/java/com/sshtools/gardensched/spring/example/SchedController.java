@@ -113,6 +113,36 @@ public class SchedController implements BroadcastEventListener {
 			   bottom;
 	}
 	
+	@RequestMapping(value = "/put-object", method = RequestMethod.GET, produces = { "text/plain" })
+	@ResponseBody
+	@ResponseStatus(value = HttpStatus.OK)
+	public String putObject(HttpServletRequest request,
+			HttpServletResponse response) {
+		
+		var obj = new TestObject((int)(Math.random() * 10), (int)(Math.random() * 10), (int)(Math.random() * 10));
+		distributedScheduledExecutor.put("OBJECTS", "SomeKey", obj);
+		
+		return "Object Stored - " + obj;
+	}
+	
+	@RequestMapping(value = "/get-object", method = RequestMethod.GET, produces = { "text/plain" })
+	@ResponseBody
+	@ResponseStatus(value = HttpStatus.OK)
+	public String getObject(HttpServletRequest request,
+			HttpServletResponse response) {
+		
+		return "Object Retrieved - " + distributedScheduledExecutor.get("OBJECTS", "SomeKey");
+	}
+	
+	@RequestMapping(value = "/remove-object", method = RequestMethod.GET, produces = { "text/plain" })
+	@ResponseBody
+	@ResponseStatus(value = HttpStatus.OK)
+	public String removeObject(HttpServletRequest request,
+			HttpServletResponse response) {
+		
+		return "Object Removed - " + distributedScheduledExecutor.remove("OBJECTS", "SomeKey");
+	}
+	
 	@RequestMapping(value = "/start-simple-job", method = RequestMethod.GET, produces = { "text/plain" })
 	@ResponseBody
 	@ResponseStatus(value = HttpStatus.OK)

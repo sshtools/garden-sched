@@ -15,8 +15,11 @@
  */
 package com.sshtools.gardensched;
 
+import java.io.Serializable;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
@@ -27,13 +30,15 @@ import org.slf4j.LoggerFactory;
 
 public class Ack {
 	
+	private record AckEntry(Semaphore semaphore, List<Serializable> results) {}
+	
 	public interface ThrowingRunnable {
 		void run() throws Exception;
 	}
 	
 	private final static Logger LOG = LoggerFactory.getLogger(Ack.class);
 
-	private final Map<Request.Type, Map<ClusterID, Semaphore>> acks = new HashMap<>();
+	private final Map<Request.Type, Map<ClusterID, AckEntry>> acks = new HashMap<>();
 
 	private final Duration acknowledgeTimeout;
 	
@@ -41,12 +46,12 @@ public class Ack {
 		this.acknowledgeTimeout = acknowledgeTimeout;
 	}
 	
-	public void ack(Request.Type type, ClusterID id) {
+	public void ack(Request.Type type, ClusterID id, Serializable response) {
 		if(LOG.isDebugEnabled()) {
 			LOG.debug("Received {} ack for {}", type, id);
 		}
 		
-		Semaphore sem;
+		AckEntry entry;
 		
 		synchronized(acks) {
 			var ackmap = acks.get(type);
@@ -55,27 +60,29 @@ public class Ack {
 				return;
 			}
 			else {
-				sem = ackmap.get(id);
+				entry = ackmap.get(id);
 			}
 			
 		}
 		
-		if(sem == null) {
+		if(entry == null) {
 			LOG.warn("Timed out waiting for {} ack for {}.", type, id);
 		}
 		else {
-			sem.release();
+			if(response != null)
+				entry.results.add(response);
+			entry.semaphore.release();
 			if(LOG.isDebugEnabled()) {
 				LOG.debug("Released 1 semaphore {} for {}", type, id);
 			}
 		}
 	}
 	
-	public void runWithAck(Request.Type type, ClusterID id, int size, ThrowingRunnable task) throws Exception {
+	public List<Serializable> runWithAck(Request.Type type, ClusterID id, int size, ThrowingRunnable task) throws Exception {
 		var sem = new Semaphore(size);
 		try {
 			sem.acquire(size);
-			putAck(type, id, sem);
+			var entry = putAck(type, id, sem);
 			task.run();
 			
 			/* Wait for everyone to acknowledge via REMOVED */
@@ -90,6 +97,8 @@ public class Ack {
 			else {
 				LOG.warn("{} nodes did not reply, perhaps a node went down, ignoring.",  size - sem.availablePermits());
 			}
+			
+			return entry.results;
 		} finally {
 			removeAck(type, id);
 		}
@@ -108,14 +117,16 @@ public class Ack {
 		}
 	}
 	
-	private void  putAck(Request.Type type, ClusterID id, Semaphore sem) {
+	private AckEntry  putAck(Request.Type type, ClusterID id, Semaphore sem) {
 		synchronized(acks) {
 			var ackmap = acks.get(type);
 			if(ackmap == null) {
 				ackmap = new ConcurrentHashMap<>();
 				acks.put(type, ackmap);
 			}
-			ackmap.put(id, sem);
+			var entry = new AckEntry(sem, new ArrayList<>());
+			ackmap.put(id, entry);
+			return entry;
 		}
 	}
 }

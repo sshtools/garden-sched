@@ -92,6 +92,10 @@ public interface DistributedCallable<RESULT extends Serializable> extends Callab
 		return builder(id, task).withClassifiers(classifiers).build();
 	}
 	
+	public static <RESULT extends Serializable> Builder<RESULT> builder(SerializableCallable<RESULT> task) {
+		return new Builder<>(null, task);
+	}
+	
 	public static <RESULT extends Serializable> Builder<RESULT> builder(String id, SerializableCallable<RESULT> task) {
 		return new Builder<>(id, task);
 	}

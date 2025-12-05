@@ -15,16 +15,13 @@
  */
 package com.sshtools.gardensched;
 
-import org.jgroups.Address;
-import org.jgroups.stack.IpAddress;
-import org.jgroups.util.Streamable;
-import org.jgroups.util.UUID;
-import org.jgroups.util.Util;
-
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import org.jgroups.Address;
+import org.jgroups.util.Streamable;
 
 public class ClusterID implements Streamable {
 	private String owner;
@@ -39,7 +36,6 @@ public class ClusterID implements Streamable {
 	public ClusterID(String owner, int id) {
 		this.owner = owner;
 		this.id = id;
-		checkOwner();
 	}
 
 	public ClusterID(String strId) {
@@ -79,7 +75,6 @@ public class ClusterID implements Streamable {
 	}
 
 	public void writeTo(DataOutput out) throws IOException {
-		checkOwner();
 		out.writeUTF(owner);
 		out.writeInt(id);
 		out.writeUTF(strId);
@@ -89,27 +84,13 @@ public class ClusterID implements Streamable {
 		owner = in.readUTF();
 		id = in.readInt();
 		strId = in.readUTF();
-		
-		checkOwner();
-	}
-
-	private void checkOwner() {
-		try {
-			UUID.fromString(owner.toString());
-			throw new Exception();
-		}
-		catch(IllegalArgumentException  e) {
-		}
-		catch(Exception e) {
-			e.printStackTrace();
-		}
 	}
 
 	public static ClusterID parse(String cid) {
 		var idx = cid.indexOf("::");
 		if(idx > -1) {
 			try {
-				return new ClusterID(cid.substring(0, cid.indexOf("..")), Integer.parseInt(cid.substring(idx + 2)));
+				return new ClusterID(cid.substring(0, idx), Integer.parseInt(cid.substring(idx + 2)));
 			} catch (Exception e) {
 				throw new IllegalArgumentException(e);
 			}

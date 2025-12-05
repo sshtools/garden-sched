@@ -89,6 +89,10 @@ public interface DistributedRunnable extends Runnable, DistributedTask<Serializa
 	public static DistributedRunnable of(SerializableRunnable task, String... classifiers) {
 		return builder(null, task).withClassifiers(classifiers).build();
 	}
+
+	public static Builder builder(SerializableRunnable task) {
+		return builder(null, task);
+	}
 	
 	public static Builder builder(String id, SerializableRunnable task) {
 		return new Builder(id, task);

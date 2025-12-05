@@ -23,8 +23,16 @@ public enum Affinity {
 	 * <p>
 	 * This basically makes the task act like a normal local in-JVM task, but allows
 	 * the task to be decorated with classifiers and to be accessed by it's ID.
+	 * <p>
+	 * Local tasks are never persisted.
 	 */
 	LOCAL,
+	/**
+	 * Run on the originating node only. If this node goes down,  other nodes will not take
+	 * over. If it is a repeating task though, this task may run on this node again if it
+	 * is restarted.
+	 */
+	ONLY_THIS,
 	/**
 	 * Run on the originating node only, but if the node goes down allow another
 	 * node to take over the task.

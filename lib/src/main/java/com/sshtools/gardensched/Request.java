@@ -29,32 +29,78 @@ import com.sshtools.gardensched.DistributedRunnable.DistributedRunnableImpl;
 
 public class Request implements Streamable {
 	public enum Type {
-		SUBMIT, EXECUTING, RESULT, REMOVE, UNLOCK, UNLOCKED, LOCK, LOCKED,EVENT, START_PROGRESS, PROGRESS, PROGRESS_MESSAGE, ACK
+		SUBMIT, EXECUTING, RESULT, REMOVE, UNLOCK, UNLOCKED, LOCK, LOCKED,EVENT, START_PROGRESS, PROGRESS, PROGRESS_MESSAGE, ACK, STORED_OBJECT, REMOVE_OBJECT, HAS_OBJECT, GET_OBJECT
+	}
+	
+	public final static class StorePayload implements Streamable {
+
+		private Serializable key;
+		private String path;
+
+		public StorePayload() { }
+		
+		public StorePayload(String path, Serializable key) {
+			super();
+			this.key = key;
+			this.path = path;
+		}
+
+		public Serializable key() {
+			return key;
+		}
+
+		public String path() {
+			return path;
+		}
+
+		@Override
+		public void writeTo(DataOutput out) throws IOException {
+			DistributedScheduledExecutor.currentSerializer().serialize(key, out);
+			out.writeUTF(path);
+		}
+
+		@Override
+		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
+			key = DistributedScheduledExecutor.currentSerializer().deserialize(Serializable.class, in);
+			path = in.readUTF();
+		}
 	}
 	
 	public final static class AckPayload implements Streamable {
 
 		private Type type;
+		private Serializable result;
 
 		public AckPayload() { }
-		
+
 		public AckPayload(Type type) {
+			this(type, null);
+		}
+		
+		public AckPayload(Type type, Serializable result) {
 			super();
 			this.type = type;
+			this.result = result;
 		}
 
 		public Type type() {
 			return type;
 		}
 
+		public Serializable result() {
+			return result;
+		}
+
 		@Override
 		public void writeTo(DataOutput out) throws IOException {
 			out.writeUTF(type.name());
+			DistributedScheduledExecutor.currentSerializer().serialize(result, out);
 		}
 
 		@Override
 		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
 			type = Type.valueOf(in.readUTF());
+			result = DistributedScheduledExecutor.currentSerializer().deserialize(Serializable.class, in);
 		}
 	}
 	
@@ -382,6 +428,12 @@ public class Request implements Streamable {
 			break;
 		case ACK:
 			payload = new AckPayload();
+			break;
+		case STORED_OBJECT:
+		case REMOVE_OBJECT:
+		case GET_OBJECT:
+		case HAS_OBJECT:
+			payload = new StorePayload();
 			break;
 		default:
 			payload = null;

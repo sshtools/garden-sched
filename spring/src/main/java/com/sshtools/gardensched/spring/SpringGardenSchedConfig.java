@@ -33,6 +33,7 @@ import com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.sshtools.gardensched.DistributedScheduledExecutor;
+import com.sshtools.gardensched.ObjectStore;
 import com.sshtools.gardensched.PayloadFilter;
 import com.sshtools.gardensched.PayloadSerializer;
 
@@ -80,6 +81,7 @@ public class SpringGardenSchedConfig {
 		return new DistributedScheduledExecutor.Builder().
 				withPayloadSerializer(payloadSerializer).
 				withPayloadFilter(payloadFilter).
+				withObjectStore(ObjectStore.basicMap()).
 				withCloseTimeout(Duration.ofSeconds(1)).
 				withAcknowledgeTimeout(Duration.ofMinutes(30)). // Helps debugging
 				build();
