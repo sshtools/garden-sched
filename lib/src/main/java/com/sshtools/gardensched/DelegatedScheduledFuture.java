@@ -15,6 +15,8 @@
  */
 package com.sshtools.gardensched;
 
+import java.io.Serializable;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Delayed;
 import java.util.concurrent.ScheduledFuture;
@@ -22,8 +24,8 @@ import java.util.concurrent.TimeUnit;
 
 public abstract class DelegatedScheduledFuture<V> extends AbstractDelegateScheduledFuture<V> {
 
-	public DelegatedScheduledFuture(ClusterID id, ScheduledFuture<V> delegate, Set<String> classifiers) {
-		super(id, delegate, classifiers);
+	public DelegatedScheduledFuture(ClusterID id, ScheduledFuture<V> delegate, Set<String> classifiers, Map<String, Serializable> attributes) {
+		super(id, delegate, classifiers, attributes);
 	}
 
 	@Override

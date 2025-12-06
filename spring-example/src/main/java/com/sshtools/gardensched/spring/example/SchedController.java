@@ -1,6 +1,7 @@
 package com.sshtools.gardensched.spring.example;
 
 import java.io.Serializable;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 import org.jgroups.Address;
@@ -63,6 +64,7 @@ public class SchedController implements BroadcastEventListener {
 				<td>Period</td>
 				<td>Unit</td>
 				<td>Trigger</td>
+				<td>Attrs</td>
 			</tr>
 			</thead>
 			""";
@@ -83,6 +85,7 @@ public class SchedController implements BroadcastEventListener {
 						<td>%9</td>
 						<td>%A</td>
 						<td>%B</td>
+						<td>%C</td>
 					</tr>
 					""".
 					replace("%1", future.clusterID().toString()).
@@ -97,7 +100,8 @@ public class SchedController implements BroadcastEventListener {
 					replace("%8", String.valueOf(info.spec().initialDelay())).
 					replace("%9", String.valueOf(info.spec().period())).
 					replace("%A", info.spec().unit().name()).
-					replace("%B", String.valueOf(info.spec().trigger()));
+					replace("%B", String.valueOf(info.spec().trigger())).
+					replace("%C", toMapHtml(future.attributes()));
 			middle += row;
 		}
 		
@@ -113,6 +117,17 @@ public class SchedController implements BroadcastEventListener {
 			   bottom;
 	}
 	
+	private CharSequence toMapHtml(Map<String, Serializable> attributes) {
+		var sb = new StringBuilder();
+		for(var en : attributes.entrySet()) {
+			if(sb.length() > 0) {
+				sb.append("<br/>");
+			}
+			sb.append(String.format("<i>%s</i>=%s", en.getKey(), en.getValue()));
+		}
+		return sb.toString();
+	}
+
 	@RequestMapping(value = "/put-object", method = RequestMethod.GET, produces = { "text/plain" })
 	@ResponseBody
 	@ResponseStatus(value = HttpStatus.OK)
@@ -164,7 +179,10 @@ public class SchedController implements BroadcastEventListener {
 		
 		var  job = new TestJob("Hello World", 99);
 		
-		distributedScheduledExecutor.schedule(DistributedRunnable.of(job), 10, TimeUnit.SECONDS);
+		distributedScheduledExecutor.schedule(DistributedRunnable.builder(job).
+				addAttribute("AKey", "AValue").
+				addAttribute("BKey", 123).
+				build(), 10, TimeUnit.SECONDS);
 		
 		return "Job Started";
 	}
@@ -214,7 +232,11 @@ public class SchedController implements BroadcastEventListener {
 		
 		var  job = new TestJob("Hello Trigger", 123);
 		
-		distributedScheduledExecutor.schedule(DistributedRunnable.of(job), new TriggerAdapter(new CronTrigger("0 * * * * *")));
+		distributedScheduledExecutor.schedule(DistributedRunnable.builder(job).
+				addAttribute("AKey", "AValue").
+				addAttribute("BKey", 123).
+				addAttribute("CKey", false).
+				build(), new TriggerAdapter(new CronTrigger("0 * * * * *")));
 		
 		return "Job Started";
 	}

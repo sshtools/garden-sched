@@ -22,7 +22,9 @@ import java.io.Serializable;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -43,6 +45,7 @@ public interface DistributedTask<TASK extends Serializable> extends Streamable {
 		private Boolean persistent;
 		private String bundle;
 		private String name;
+		private Map<String, Serializable> attributes = Collections.emptyMap();
 		protected String key;
 
 		
@@ -59,17 +62,12 @@ public interface DistributedTask<TASK extends Serializable> extends Streamable {
 			this.key = bldr.key;
 			this.bundle = bldr.bundle;
 			this.name = bldr.name;
+			this.attributes = Collections.unmodifiableMap(new HashMap<>(bldr.attributes));
 		}
 
-		public AbstractTask(Affinity affinity, String id, ConflictResolution onConflict, Boolean persistent, String key, String bundle, String name, String... classifiers) {
-			this.affinity = affinity;
-			this.onConflict = onConflict;
-			this.id = id;
-			this.classifiers = Set.of(classifiers);
-			this.persistent = persistent;
-			this.key = key;
-			this.bundle = bundle;
-			this.name = name;
+		@Override
+		public Map<String, Serializable> attributes() {
+			return attributes;
 		}
 
 		@Override
@@ -120,6 +118,11 @@ public interface DistributedTask<TASK extends Serializable> extends Streamable {
 			out.writeInt(classifiers.size());
 			for(var c : classifiers)
 				out.writeUTF(c);
+			out.writeInt(attributes.size());
+			for(var entry : attributes.entrySet()) {
+				out.writeUTF(entry.getKey());
+				DistributedScheduledExecutor.currentSerializer().serialize(entry.getValue(), out);
+			}
 		}
 
 		@Override
@@ -143,6 +146,15 @@ public interface DistributedTask<TASK extends Serializable> extends Streamable {
 				s[i] = in.readUTF();
 			}
 			classifiers = Set.of(s);
+			c = in.readInt();
+			var attributes = new  HashMap<String,  Serializable>();
+			for(var i = 0 ; i < c ; i++) {
+				attributes.put(
+					in.readUTF(), 
+					DistributedScheduledExecutor.currentSerializer().deserialize(Serializable.class, in)
+				);
+			}
+			this.attributes = Collections.unmodifiableMap(attributes);
 		}
 
 	}
@@ -159,6 +171,7 @@ public interface DistributedTask<TASK extends Serializable> extends Streamable {
 		private String key;
 		private String bundle;
 		private String name;
+		private Map<String, Serializable> attributes = new HashMap<>();
 
 		public AbstractBuilder(TSK task) {
 			this(UUID.randomUUID().toString(), task);
@@ -190,7 +203,7 @@ public interface DistributedTask<TASK extends Serializable> extends Streamable {
 				withAffinity(tc.affinity());
 				onConflict(tc.onConflict());
 				
-				withClassifiers(tc.classifiers());
+				addClassifiers(tc.classifiers());
 				
 				if(tc.doPersist() && !tc.dontPersist())
 					withPersistent(true);
@@ -229,6 +242,23 @@ public interface DistributedTask<TASK extends Serializable> extends Streamable {
 			return (BLDR)this;
 		}
 
+		@SuppressWarnings("unchecked")
+		public final BLDR addAttribute(String key, Serializable value) {
+			this.attributes.put(key, value);
+			return (BLDR)this;
+		}
+
+		@SuppressWarnings("unchecked")
+		public final BLDR addAttributes(Map<String, Serializable> attributes) {
+			this.attributes.putAll(attributes);
+			return (BLDR)this;
+		}
+
+		public final BLDR withAttributes(Map<String, Serializable> attributes) {
+			this.attributes.clear();
+			return addAttributes(attributes);
+		}
+
 		public final BLDR withClassifiers(String... classifiers) {
 			return withClassifiers(Arrays.asList(classifiers));
 		}
@@ -265,6 +295,17 @@ public interface DistributedTask<TASK extends Serializable> extends Streamable {
 	
 	Optional<Boolean> persistent();
 	
+	default <S extends Serializable> S attr(String attr) {
+		return attr(attr, null);
+	}
+	
+	@SuppressWarnings("unchecked")
+	default <S extends Serializable> S attr(String attr, S defaultValue) {
+		return (S)attributes().put(attr, defaultValue);
+	}
+	
+	Map<String, Serializable> attributes();
+
 	Set<String> classifiers();
 	
 	default String displayName() {

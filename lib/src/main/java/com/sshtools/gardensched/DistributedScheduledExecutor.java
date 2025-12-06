@@ -1115,7 +1115,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					}
 				}, delay, unit);
 				
-				var dfut = new DelegatedScheduledFuture<>(id, sfut, Collections.emptySet()){
+				var dfut = new DelegatedScheduledFuture<>(id, sfut, Collections.emptySet(), Collections.emptyMap()){
 
 					@Override
 					public boolean cancel(boolean mayInterrupt) {
@@ -1241,7 +1241,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				}
 			});
 			
-			var dfut = new AbstractDelegateFuture<>(id, sfut, Collections.emptySet()) {
+			var dfut = new AbstractDelegateFuture<>(id, sfut, Collections.emptySet(), Collections.emptyMap()) {
 
 				@Override
 				public boolean cancel(boolean mayInterrupt) {
@@ -1424,7 +1424,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					throw new IllegalStateException();
 				}
 				
-				var rfut = new DelegatedScheduledFuture<>(id, sfut, Collections.emptySet()) {
+				var rfut = new DelegatedScheduledFuture<>(id, sfut, Collections.emptySet(), Collections.emptyMap()) {
 					@Override
 					public boolean cancel(boolean mayInterrupt) {
 						localFutures.remove(id);
@@ -1466,10 +1466,14 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				
 				if(task.persistent().orElse(persistentByDefault)) {
 					taskStore.ifPresentOrElse(str -> {
+						
+						synchronized(started) {
 							if(deferStorageUntilStarted && !started.get())
 								deferredStorage.add(entry);
 							else
-								str.store(entry); 
+								str.store(entry);
+						}
+						
 						}, () -> {
 						throw new IllegalStateException(MessageFormat.format("Task {0} was persistent, but there is no task store configured.", id));
 					});
@@ -1592,7 +1596,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			var efuture = new EntryFuture<Object>(entry);
 			var ffuture = future;
 			var foffset = offset;
-			tinfo.userFuture = new AbstractDelegateScheduledFuture<>(entry.id, (Future<Object>)efuture, entry.task.classifiers()) {
+			tinfo.userFuture = new AbstractDelegateScheduledFuture<>(entry.id, (Future<Object>)efuture, entry.task.classifiers(), entry.task.attributes()) {
 				@Override
 				public TaskInfo info() {
 					return tinfo;

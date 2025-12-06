@@ -15,6 +15,8 @@
  */
 package com.sshtools.gardensched;
 
+import java.io.Serializable;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -26,11 +28,18 @@ public abstract class AbstractDelegateFuture<V> implements Future<V>, Identifiab
 	protected final Future<V> delegate;
 	private final ClusterID id;
 	private final Set<String> classifiers;
+	private final Map<String, Serializable> attributes;
 
-	public AbstractDelegateFuture(ClusterID id, Future<V> delegate, Set<String> classifiers) {
+	public AbstractDelegateFuture(ClusterID id, Future<V> delegate, Set<String> classifiers, Map<String, Serializable> attributes) {
 		this.delegate = delegate;
 		this.id = id;
 		this.classifiers = classifiers;
+		this.attributes = attributes;
+	}
+
+	@Override
+	public Map<String, Serializable> attributes() {
+		return attributes;
 	}
 
 	@Override
