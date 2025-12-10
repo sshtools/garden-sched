@@ -651,6 +651,10 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			default:
 				throw new IllegalStateException("Unexpected affinity " + task.affinity());
 			}
+			
+			if(result instanceof Throwable thr) {
+				result = new TaskError(thr);
+			}
 
 			var rp = new ResultPayload(result);
 			
@@ -666,7 +670,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 		@Override
 		void retrigger() {
-			execute(entry);
+			execute(entry, false);
 		}
 	}
 
@@ -720,9 +724,11 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					AckPayload ack = req.payload(); 
 					acks.ack(ack.type(), req.id(), ack.result());
 					break;
-				case SUBMIT:
-					handleSubmit(req.id(), msg.getSrc(), ((SubmitPayload)req.payload()).task(), ((SubmitPayload)req.payload()).spec());
+				case SUBMIT:{
+					SubmitPayload submission = req.payload();
+					handleSubmit(req.id(), msg.getSrc(), submission.task(), submission.spec(), submission.runNow());
 					break;
+				}
 				case EXECUTING:
 					handleExecuting(msg.getSrc(), req);
 					break;
@@ -857,7 +863,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					LOG.info("Loading from task store");
 					ts.entries().forEach(entry -> {
 						if (shouldRun(entry)) {
-							execute(entry);
+							execute(entry, false);
 						}
 					});
 				});
@@ -867,7 +873,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 	public void restore(TaskEntry entry) {
 		if (!tasks.containsKey(entry.id) && shouldRun(entry)) {
-			execute(entry);
+			execute(entry, false);
 		}
 	}
 	
@@ -1127,6 +1133,12 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					public TaskInfo info() {
 						return taskInfo.get(id);
 					}
+
+					@Override
+					public void runNow() {
+						cancel(false);
+						schedule(callable, 0, unit);
+					}
 					
 				};
 				localFutures.put(id, dfut);
@@ -1190,7 +1202,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					LOG.info("Loading from task store");
 					ts.entries().forEach(entry -> {
 						if (!tasks.containsKey(entry.id) && shouldRun(entry)) {
-							execute(entry);
+							execute(entry, false);
 						}
 					});
 				});
@@ -1252,6 +1264,11 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				@Override
 				public TaskInfo info() {
 					return taskInfo.get(id);
+				}
+
+				@Override
+				public void runNow() {
+					throw new UnsupportedOperationException();
 				}
 				
 			};
@@ -1435,6 +1452,16 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					public TaskInfo info() {
 						return taskInfo.get(id);
 					}
+
+					@Override
+					public void runNow() {
+						if(info().active())
+							throw new IllegalStateException("Already running.");
+						else {
+							cancel(false);
+							doRunnable(schedule, command, 0, period, unit, taskTrigger);
+						}
+					}
 				};
 
 				localFutures.put(id, rfut);
@@ -1480,7 +1507,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				}
 				
 				var req = new Request(Request.Type.SUBMIT, id, new SubmitPayload((DistributedTask<?>) task, spec));
-				sendExecuteRequest(null, req);
+				sendSubmitRequest(null, req);
 				return (Future<T>) taskInfo.get(id).userFuture;
 			} catch (Exception ex) {
 				if(prevTask == null)
@@ -1501,6 +1528,17 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	private void entryResults(ClusterID id, TaskEntry entry, Serializable result) {
 		var responsesReceived = entry.results.addAndGet(1);
 		var expectedResults = expectedResults(entry.task.affinity());
+		
+		var tinfo = taskInfo.get(id);
+		if(result instanceof TaskError taskError) {
+			result = taskError.toException();
+			tinfo.lastError = Optional.of((Throwable)result);
+		}
+		else {
+			tinfo.lastError = Optional.empty();
+		}
+		tinfo.lastCompleted = Optional.of(Instant.now());
+		
 		if (responsesReceived >= expectedResults) {
 			if (LOG.isDebugEnabled()) {
 				LOG.debug("No more responses to {} expected, completing.", id);
@@ -1526,7 +1564,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 	}
 
-	private void execute(TaskEntry entry) {
+	private void execute(TaskEntry entry, boolean runNow) {
 		synchronized(taskInfo) {
 			var handler = new RemoteHandler(entry);
 			var now = Instant.now();
@@ -1534,8 +1572,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			ScheduledFuture<?> future = null;
 			switch (entry.spec.schedule()) {
 			case TRIGGER:
-				var triggerContext = createTriggerContext(entry.id);
-				var nextFire = entry.spec.trigger().nextFire(triggerContext);
+				var nextFire = runNow ? Instant.now() : entry.spec.trigger().nextFire(createTriggerContext(entry.id));
 				if(LOG.isDebugEnabled()) {
 					LOG.debug("Next Fire for {} is {}", entry.id, nextFire);
 				}
@@ -1557,7 +1594,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					LOG.debug("Scheduling {} {} [] with {} from {} in {} {} (Offset is {}ms)", entry.spec.schedule(), entry.id, entry.task.id(), entry.task.affinity(),
 							entry.submitter, entry.spec.initialDelay(), entry.spec.unit(), offset);
 				}
-				var msdely = Math.max(0l,  entry.spec.unit().toMillis(entry.spec.initialDelay()) - offset);
+				var msdely = runNow ? 0 : Math.max(0l,  entry.spec.unit().toMillis(entry.spec.initialDelay()) - offset);
 				future = delegate.schedule(handler, msdely, TimeUnit.MILLISECONDS);
 				break;
 			}
@@ -1568,7 +1605,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 							entry.task.affinity(), entry.submitter, entry.spec.period(), entry.spec.unit(), entry.spec.initialDelay(), entry.spec.unit(), offset);
 				}
 			
-				var msdely = Math.max(0l,  entry.spec.unit().toMillis(entry.spec.initialDelay()) - offset);
+				var msdely = runNow ? 0 : Math.max(0l,  entry.spec.unit().toMillis(entry.spec.initialDelay()) - offset);
 				var msdur = entry.spec.unit().toMillis(entry.spec.period()); 
 				future = delegate.scheduleWithFixedDelay(handler, msdely, msdur, TimeUnit.MILLISECONDS);
 				break;
@@ -1579,7 +1616,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					LOG.debug("Scheduling {} {} [] with {} from {} in {} {} after {} {} (Offset is {}ms)", entry.spec.schedule(), entry.id, entry.task.id(),
 							entry.task.affinity(), entry.submitter, entry.spec.period(), entry.spec.unit(), entry.spec.initialDelay(), entry.spec.unit(), offset);
 				}
-				var msdely = Math.max(0l,  entry.spec.unit().toMillis(entry.spec.initialDelay()) - offset);
+				var msdely = runNow ? 0 : Math.max(0l,  entry.spec.unit().toMillis(entry.spec.initialDelay()) - offset);
 				var msdur = entry.spec.unit().toMillis(entry.spec.period()); 
 				future = delegate.scheduleAtFixedRate(handler, msdely, msdur, TimeUnit.MILLISECONDS);
 				break;
@@ -1611,6 +1648,28 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				public int compareTo(Delayed o) {
 					return ffuture.compareTo(o);
 				}
+
+				@Override
+				public void runNow() {
+					switch (entry.spec.schedule()) {
+					case NOW:
+						throw new UnsupportedOperationException();
+					default:
+						if(tinfo.active) {
+							throw new IllegalStateException("Already running.");
+						}
+						else {
+							/* Broadcast to everyone the same task, but marked to fire immediately */
+							var req = new Request(Request.Type.SUBMIT, entry.id, new SubmitPayload((DistributedTask<?>) entry.task, entry.spec(), true));
+							try {
+								sendSubmitRequest(null, req);
+							} catch (Exception e) {
+								LOG.error("Failed to re-submit task {}", entry.id, e);
+							}
+						}
+						break;
+					}
+				}
 			};
 			
 			taskInfo.put(entry.id, tinfo);
@@ -1623,7 +1682,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 	}
 
-	private void handleSubmit(ClusterID id, Address sender, DistributedTask<?> task, TaskSpec spec) {
+	private void handleSubmit(ClusterID id, Address sender, DistributedTask<?> task, TaskSpec spec, boolean runNow) {
 		var entry = new TaskEntry(id, task, sender, spec);
 		synchronized(tasks) {
 			var was = tasks.get(id);
@@ -1637,7 +1696,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 
 		if (shouldRun(entry)) {
-			execute(entry);
+			execute(entry, runNow);
 		}
 
 		if(LOG.isDebugEnabled()) {
@@ -1740,7 +1799,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				LOG.info("   Sending {} [{}]", value.id(), entry.getKey());
 				var req = new Request(Request.Type.SUBMIT, value.id(), new SubmitPayload(task, value.spec));
 				try {
-					sendExecuteRequest(mbr, req);
+					sendSubmitRequest(mbr, req);
 				} catch (Exception ioe) {
 					LOG.warn("Couldn't update new member with task {}", task.id());
 				}
@@ -1940,7 +1999,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 	}
 
-	private void sendExecuteRequest(Address mbr, Request req)
+	private void sendSubmitRequest(Address mbr, Request req)
 			throws IOException, Exception {
 		var acksReqd = mbr == null ? clusterSize : 1;
 		acks.runWithAck(Request.Type.SUBMIT, req.id(), acksReqd, () -> {

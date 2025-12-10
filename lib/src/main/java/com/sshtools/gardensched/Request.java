@@ -284,13 +284,20 @@ public class Request implements Streamable {
 	public final static class SubmitPayload implements Streamable {
 		private DistributedTask<?> task;
 		private TaskSpec spec;
+		private boolean runNow;
 		
 		public SubmitPayload() {}
 
 		public SubmitPayload(DistributedTask<?> task, TaskSpec spec) {
+			this(task, spec, false);
+		}
+		
+
+		public SubmitPayload(DistributedTask<?> task, TaskSpec spec, boolean runNow) {
 			super();
 			this.task = task;
 			this.spec = spec;
+			this.runNow = runNow;
 		}
 
 		public DistributedTask<?> task() {
@@ -303,6 +310,7 @@ public class Request implements Streamable {
 
 		@Override
 		public void writeTo(DataOutput out) throws IOException {
+			out.writeBoolean(runNow);
 			Util.writeStreamable(spec, out);
 			out.writeBoolean(task != null);
 			if (task != null) {
@@ -313,6 +321,7 @@ public class Request implements Streamable {
 
 		@Override
 		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
+			runNow = in.readBoolean();
 			spec = Util.readStreamable(TaskSpec::new, in);
 			var haveTask = in.readBoolean();
 			if (haveTask) {
@@ -327,6 +336,10 @@ public class Request implements Streamable {
 				task = null;
 			}
 			
+		}
+
+		public boolean runNow() {
+			return runNow;
 		}
 		
 	}

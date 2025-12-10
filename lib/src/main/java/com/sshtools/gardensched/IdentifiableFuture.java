@@ -29,4 +29,6 @@ public interface IdentifiableFuture<V> extends Future<V> {
 	Map<String, Serializable> attributes();
 	
 	TaskInfo info();
+	
+	void runNow();
 }

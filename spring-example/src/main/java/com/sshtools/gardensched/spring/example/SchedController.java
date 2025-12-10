@@ -13,13 +13,16 @@ import org.springframework.scheduling.support.CronTrigger;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.ResponseStatus;
 
 import com.sshtools.gardensched.BroadcastEventListener;
+import com.sshtools.gardensched.ClusterID;
 import com.sshtools.gardensched.DistributedRunnable;
 import com.sshtools.gardensched.DistributedScheduledExecutor;
 import com.sshtools.gardensched.TaskContext;
+import com.sshtools.gardensched.TaskInfo;
 import com.sshtools.gardensched.spring.TriggerAdapter;
 
 import jakarta.annotation.PostConstruct;
@@ -65,6 +68,8 @@ public class SchedController implements BroadcastEventListener {
 				<td>Unit</td>
 				<td>Trigger</td>
 				<td>Attrs</td>
+				<td>Get</td>
+				<td>Now!</td>
 			</tr>
 			</thead>
 			""";
@@ -86,10 +91,12 @@ public class SchedController implements BroadcastEventListener {
 						<td>%A</td>
 						<td>%B</td>
 						<td>%C</td>
+						<td>%D</td>
+						<td>%E</td>
 					</tr>
 					""".
 					replace("%1", future.clusterID().toString()).
-					replace("%2", info.active() ? "Active" : "Idle").
+					replace("%2", statusText(info)).
 					replace("%3", String.join(", ", future.classifiers())).
 					replace("%4", info.progress().map(String::valueOf).orElse("None")).
 					replace("%5", info.maxProgress().map(String::valueOf).orElse("None")).
@@ -101,7 +108,9 @@ public class SchedController implements BroadcastEventListener {
 					replace("%9", String.valueOf(info.spec().period())).
 					replace("%A", info.spec().unit().name()).
 					replace("%B", String.valueOf(info.spec().trigger())).
-					replace("%C", toMapHtml(future.attributes()));
+					replace("%C", toMapHtml(future.attributes())).
+					replace("%D", "<a href=\"get?cid=" + future.clusterID().toString() + "\">Get</a>").
+					replace("%E", "<a href=\"run-now?cid=" + future.clusterID().toString() + "\">Now!</a>");
 			middle += row;
 		}
 		
@@ -116,6 +125,14 @@ public class SchedController implements BroadcastEventListener {
 			   middle +
 			   bottom;
 	}
+
+	private CharSequence statusText(TaskInfo info) {
+		var str = info.active() ? "Active" : "Idle";
+		if(info.lastError().isPresent()) {
+			str += "<br/>Err: " + info.lastError().get();
+		}
+		return str;
+	}
 	
 	private CharSequence toMapHtml(Map<String, Serializable> attributes) {
 		var sb = new StringBuilder();
@@ -126,6 +143,37 @@ public class SchedController implements BroadcastEventListener {
 			sb.append(String.format("<i>%s</i>=%s", en.getKey(), en.getValue()));
 		}
 		return sb.toString();
+	}
+
+	@RequestMapping(value = "/get", method = RequestMethod.GET, produces = { "text/plain" })
+	@ResponseBody
+	@ResponseStatus(value = HttpStatus.OK)
+	public String get(HttpServletRequest request,
+			HttpServletResponse response,
+			@RequestParam String cid) throws Exception {
+		
+		var res = distributedScheduledExecutor.future(ClusterID.parse(cid)).get();
+		if(res instanceof Exception exception)
+			throw exception;
+		
+		return "Object Returned - " + res;
+	}
+
+	@RequestMapping(value = "/run-now", method = RequestMethod.GET, produces = { "text/plain" })
+	@ResponseBody
+	@ResponseStatus(value = HttpStatus.OK)
+	public String runNow(HttpServletRequest request,
+			HttpServletResponse response,
+			@RequestParam String cid) throws Exception {
+
+		var ftr = distributedScheduledExecutor.future(ClusterID.parse(cid));
+		ftr.runNow();
+		
+		var res = ftr.get();
+		if(res instanceof Exception exception)
+			throw exception;
+		
+		return "Object Returned - " + res;
 	}
 
 	@RequestMapping(value = "/put-object", method = RequestMethod.GET, produces = { "text/plain" })
@@ -187,6 +235,20 @@ public class SchedController implements BroadcastEventListener {
 		return "Job Started";
 	}
 	
+	@RequestMapping(value = "/start-job-class-error", method = RequestMethod.GET, produces = { "text/plain" })
+	@ResponseBody
+	@ResponseStatus(value = HttpStatus.OK)
+	public String startJobClassError(HttpServletRequest request,
+			HttpServletResponse response) {
+		
+		var  job = new TestJob("error", 99);
+		
+		distributedScheduledExecutor.schedule(DistributedRunnable.builder(job).
+				build(), 10, TimeUnit.SECONDS);
+		
+		return "Job Started";
+	}
+	
 	@RequestMapping(value = "/start-long-job", method = RequestMethod.GET, produces = { "text/plain" })
 	@ResponseBody
 	@ResponseStatus(value = HttpStatus.OK)
@@ -227,7 +289,7 @@ public class SchedController implements BroadcastEventListener {
 	@RequestMapping(value = "/start-trigger", method = RequestMethod.GET, produces = { "text/plain" })
 	@ResponseBody
 	@ResponseStatus(value = HttpStatus.OK)
-	public String startTrugger(HttpServletRequest request,
+	public String startTrigger(HttpServletRequest request,
 			HttpServletResponse response) {
 		
 		var  job = new TestJob("Hello Trigger", 123);
@@ -237,6 +299,23 @@ public class SchedController implements BroadcastEventListener {
 				addAttribute("BKey", 123).
 				addAttribute("CKey", false).
 				build(), new TriggerAdapter(new CronTrigger("0 * * * * *")));
+		
+		return "Job Started";
+	}
+	
+	@RequestMapping(value = "/start-trigger-error", method = RequestMethod.GET, produces = { "text/plain" })
+	@ResponseBody
+	@ResponseStatus(value = HttpStatus.OK)
+	public String startTriggerError(HttpServletRequest request,
+			HttpServletResponse response) {
+		
+		var  job = new TestJob("error", 123);
+		
+		distributedScheduledExecutor.schedule(DistributedRunnable.builder(job).
+				addAttribute("AKey", "AValue").
+				addAttribute("BKey", 123).
+				addAttribute("CKey", false).
+				build(), new TriggerAdapter(new CronTrigger("30 * * * * *")));
 		
 		return "Job Started";
 	}

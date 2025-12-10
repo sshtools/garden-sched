@@ -47,6 +47,11 @@ public class TestJob implements SerializableRunnable {
 
 	@Override
 	public void run() {
+		
+		if("error".equals(param1)) {
+			throw new IllegalStateException("Task threw an error because it was told to!");
+		}
+		
 		System.out.format("TestJob! Param1: %s  Param2: %d  Random: %d%n", 
 				param1,  
 				param2,
