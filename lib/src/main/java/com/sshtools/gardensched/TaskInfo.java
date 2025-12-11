@@ -15,6 +15,7 @@
  */
 package com.sshtools.gardensched;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.concurrent.Future;
@@ -101,6 +102,10 @@ public final class TaskInfo {
 
 	public Instant lastScheduled() {
 		return lastScheduled;
+	}
+	
+	public Optional<Duration> taken() {
+		return lastExecuted.map(le -> Duration.between(le, lastCompleted.orElse(Instant.now())));
 	}
 	
 	public Optional<Instant> lastExecuted() {

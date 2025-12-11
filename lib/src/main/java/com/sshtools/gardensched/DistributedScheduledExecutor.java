@@ -1566,22 +1566,27 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 	private void execute(TaskEntry entry, boolean runNow) {
 		synchronized(taskInfo) {
+			
 			var handler = new RemoteHandler(entry);
 			var now = Instant.now();
-			var offset = Instant.now().toEpochMilli() - entry.spec.submitted().toEpochMilli();
+			var offset = 0; //Instant.now().toEpochMilli() - entry.spec.submitted().toEpochMilli();
+			
 			ScheduledFuture<?> future = null;
 			switch (entry.spec.schedule()) {
 			case TRIGGER:
+			{
 				var nextFire = runNow ? Instant.now() : entry.spec.trigger().nextFire(createTriggerContext(entry.id));
+				var msdely = Math.max(0, nextFire.toEpochMilli() - now.toEpochMilli()); 
 				if(LOG.isDebugEnabled()) {
-					LOG.debug("Next Fire for {} is {}", entry.id, nextFire);
+					LOG.debug("Next Fire for {} is {} in {} ms", entry.id, nextFire, msdely);
 				}
 				future = delegate.schedule(
-						handler, 
-						Math.max(0, nextFire.toEpochMilli() - now.toEpochMilli()),
-						TimeUnit.MILLISECONDS
-					);
+					handler, 
+					msdely,
+					TimeUnit.MILLISECONDS
+				);
 				break;
+			}
 			case NOW:
 				if(LOG.isDebugEnabled()) {
 					LOG.debug("Execute {} {} [] with {} from {}", entry.spec.schedule(), entry.id, entry.task.id(), entry.task.affinity(), entry.submitter);
@@ -1594,7 +1599,11 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					LOG.debug("Scheduling {} {} [] with {} from {} in {} {} (Offset is {}ms)", entry.spec.schedule(), entry.id, entry.task.id(), entry.task.affinity(),
 							entry.submitter, entry.spec.initialDelay(), entry.spec.unit(), offset);
 				}
-				var msdely = runNow ? 0 : Math.max(0l,  entry.spec.unit().toMillis(entry.spec.initialDelay()) - offset);
+				
+				var msdely = runNow 
+					? 0 
+					: Math.max(0l,  entry.spec.unit().toMillis(entry.spec.initialDelay()) - offset);
+				
 				future = delegate.schedule(handler, msdely, TimeUnit.MILLISECONDS);
 				break;
 			}
@@ -1633,7 +1642,14 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			var efuture = new EntryFuture<Object>(entry);
 			var ffuture = future;
 			var foffset = offset;
-			tinfo.userFuture = new AbstractDelegateScheduledFuture<>(entry.id, (Future<Object>)efuture, entry.task.classifiers(), entry.task.attributes()) {
+			
+			tinfo.userFuture = new AbstractDelegateScheduledFuture<>(
+					entry.id, 
+					(Future<Object>)efuture, 
+					entry.task.classifiers(), 
+					entry.task.attributes()
+				) {
+				
 				@Override
 				public TaskInfo info() {
 					return tinfo;
@@ -1641,7 +1657,13 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 				@Override
 				public long getDelay(TimeUnit unit) {
-					return Math.max(0l, ffuture.getDelay(unit) - foffset);
+					return unit.convert(Duration.ofMillis(
+							Math.max(
+								0l, 
+								ffuture.getDelay(TimeUnit.MILLISECONDS) - foffset
+							)
+						)
+					);
 				}
 
 				@Override
