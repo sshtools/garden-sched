@@ -266,6 +266,11 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					public Address address() {
 						return DistributedScheduledExecutor.this.address();
 					}
+
+					@Override
+					public boolean isCancelled() {
+						return DistributedScheduledExecutor.this.future(id).isCancelled();
+					}
 				});
 				
 				doTask(tinfo, new TaskCompletionContext() {
@@ -678,83 +683,89 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 		@Override
 		public void receive(Message msg) {
-			srlzr.set(payloadSerializer);
-			fltr.set(payloadFilter);
-			try {
-				Request req = Util.streamableFromByteBuffer(Request.class, ((BytesMessage) msg).getBytes(),
-						msg.getOffset(), msg.getLength());
-				switch (req.type()) {
-				case GET_OBJECT:
-					handleGetObject(msg.getSrc(), req);
-					break;
-				case HAS_OBJECT:
-					handleHasObject(msg.getSrc(), req);
-					break;
-				case REMOVE_OBJECT:
-					handleRemoveObject(msg.getSrc(), req);
-					break;
-				case STORED_OBJECT:
-					handleStore(msg.getSrc(), req);
-					break;
-				case START_PROGRESS:
-					handleStartProgress(msg.getSrc(), req);
-					break;
-				case PROGRESS:
-					handleProgress(msg.getSrc(), req);
-					break;
-				case PROGRESS_MESSAGE:
-					handleProgressMessage(msg.getSrc(), req);
-					break;
-				case EVENT:
-					handleEvent(msg.getSrc(), req);
-					break;
-				case LOCK:
-					handleLock(req);
-					break;
-				case LOCKED:
-					handleLocked(req);
-					break;
-				case UNLOCK:
-					handleUnlock(req);
-					break;
-				case UNLOCKED:
-					handleUnlocked(req);
-					break;
-				case ACK:
-					AckPayload ack = req.payload(); 
-					acks.ack(ack.type(), req.id(), ack.result());
-					break;
-				case SUBMIT:{
-					SubmitPayload submission = req.payload();
-					handleSubmit(req.id(), msg.getSrc(), submission.task(), submission.spec(), submission.runNow());
-					break;
-				}
-				case EXECUTING:
-					handleExecuting(msg.getSrc(), req);
-					break;
-				case RESULT:
-					var id = req.id();
-					var entry = tasks.get(id);
-					ResultPayload res = req.payload(); 
-					if (entry == null) {
-						LOG.error("Received result for task I don't know about, {}", id);
-					} else {
-						taskInfo.get(id).active = false;
-						entryResults(id, entry, res.result());
+			if(msg instanceof BytesMessage bmsg) {
+			
+				srlzr.set(payloadSerializer);
+				fltr.set(payloadFilter);
+				try {
+					Request req = Util.streamableFromByteBuffer(Request.class, bmsg.getBytes(),
+							msg.getOffset(), msg.getLength());
+					switch (req.type()) {
+					case GET_OBJECT:
+						handleGetObject(msg.getSrc(), req);
+						break;
+					case HAS_OBJECT:
+						handleHasObject(msg.getSrc(), req);
+						break;
+					case REMOVE_OBJECT:
+						handleRemoveObject(msg.getSrc(), req);
+						break;
+					case STORED_OBJECT:
+						handleStore(msg.getSrc(), req);
+						break;
+					case START_PROGRESS:
+						handleStartProgress(msg.getSrc(), req);
+						break;
+					case PROGRESS:
+						handleProgress(msg.getSrc(), req);
+						break;
+					case PROGRESS_MESSAGE:
+						handleProgressMessage(msg.getSrc(), req);
+						break;
+					case EVENT:
+						handleEvent(msg.getSrc(), req);
+						break;
+					case LOCK:
+						handleLock(req);
+						break;
+					case LOCKED:
+						handleLocked(req);
+						break;
+					case UNLOCK:
+						handleUnlock(req);
+						break;
+					case UNLOCKED:
+						handleUnlocked(req);
+						break;
+					case ACK:
+						AckPayload ack = req.payload(); 
+						acks.ack(ack.type(), req.id(), ack.result());
+						break;
+					case SUBMIT:{
+						SubmitPayload submission = req.payload();
+						handleSubmit(req.id(), msg.getSrc(), submission.task(), submission.spec(), submission.runNow());
+						break;
 					}
-					sendRequest(msg.getSrc(), new Request(Request.Type.ACK, req.id(), new AckPayload(Request.Type.RESULT)));
-					break;
-				case REMOVE:
-					handleRemove(msg.getSrc(), req);
-					break;
-				default:
-					throw new IllegalArgumentException("Type " + req.type() + " is not recognized");
+					case EXECUTING:
+						handleExecuting(msg.getSrc(), req);
+						break;
+					case RESULT:
+						var id = req.id();
+						var entry = tasks.get(id);
+						ResultPayload res = req.payload(); 
+						if (entry == null) {
+							LOG.error("Received result for task I don't know about, {}", id);
+						} else {
+							taskInfo.get(id).active = false;
+							entryResults(id, entry, res.result());
+						}
+						sendRequest(msg.getSrc(), new Request(Request.Type.ACK, req.id(), new AckPayload(Request.Type.RESULT)));
+						break;
+					case REMOVE:
+						handleRemove(msg.getSrc(), req);
+						break;
+					default:
+						throw new IllegalArgumentException("Type " + req.type() + " is not recognized");
+					}
+				} catch (Exception e) {
+					LOG.error("Exception receiving message from {}", msg.getSrc(), e);
+				} finally {
+					srlzr.remove();
+					fltr.remove();
 				}
-			} catch (Exception e) {
-				LOG.error("Exception receiving message from {}", msg.getSrc(), e);
-			} finally {
-				srlzr.remove();
-				fltr.remove();
+			}
+			else {
+				LOG.warn("Unexpected message: {}", msg);
 			}
 		}
 

@@ -10,7 +10,7 @@
 	</parent>
 	<groupId>com.sshtools</groupId>
 	<artifactId>garden-sched-spring-example</artifactId>
-	<version>0.0.6</version>
+	<version>0.5.0</version>
 	<name>Garden Sched - Spring Example</name>
 	<description>Demo project for Garden  Sched and Spring Boot</description>
 	

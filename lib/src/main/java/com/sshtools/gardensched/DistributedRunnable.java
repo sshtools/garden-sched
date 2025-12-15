@@ -97,4 +97,5 @@ public interface DistributedRunnable extends Runnable, DistributedTask<Serializa
 	public static Builder builder(String id, SerializableRunnable task) {
 		return new Builder(id, task);
 	}
+
 }

@@ -15,26 +15,25 @@
  */
 package com.sshtools.gardensched;
 
-import org.jgroups.Address;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 
-public abstract class TaskContext {
+public interface SerializableJob extends SerializableRunnable {
 
-	final static ThreadLocal<TaskContext> ctx = new ThreadLocal<>();
-	
-	public static TaskContext get() {
-		var c = ctx.get();
-		if(c == null)
-			throw new IllegalStateException("Not running in context of a task.");
-		return c;
+	default void run() {
+		try {
+			execute();
+		}
+		catch(IOException ioe) {
+			throw new UncheckedIOException(ioe);
+		}
+		catch(RuntimeException re) {
+			throw re;
+		}
+		catch(Exception e) {
+			throw new IllegalStateException("Job failed.", e);
+		}
 	}
 	
-	public abstract ClusterID id();
-	
-	public abstract Address address();
-
-	public abstract TaskProgress progress();
-	
-	public abstract void cancel();
-	
-	public abstract boolean isCancelled();
+	void execute() throws Exception;
 }

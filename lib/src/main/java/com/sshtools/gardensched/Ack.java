@@ -107,6 +107,9 @@ public class Ack {
 	private void  removeAck(Request.Type type, ClusterID id) {
 
 		synchronized(acks) {
+			if(LOG.isDebugEnabled()) {
+				LOG.debug("Removing {} Ack for {}", type, id);
+			}
 			var ackmap = acks.get(type);
 			if(ackmap != null) {
 				ackmap.remove(id);
