@@ -31,7 +31,7 @@ public interface SerializableJob extends SerializableRunnable {
 			throw re;
 		}
 		catch(Exception e) {
-			throw new IllegalStateException("Job failed.", e);
+			throw new IllegalStateException(e.getMessage() == null ? "Job failed." : e.getMessage(), e);
 		}
 	}
 	

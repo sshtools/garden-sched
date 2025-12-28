@@ -90,6 +90,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		private boolean restoreTasksAtStartup = true;
 		private boolean deferStorageUntilStarted = false;
 		private boolean checkLocalObjectStorageFirst = true;
+		private boolean storeToLocalUponRemoteRetrieval = true;
 
 		public DistributedScheduledExecutor build() throws Exception {
 			return new DistributedScheduledExecutor(this);
@@ -115,6 +116,11 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		
 		public Builder withRestoreTasksAtStartup(boolean restoreTasksAtStartup) {
 			this.restoreTasksAtStartup = restoreTasksAtStartup;
+			return this;
+		}
+		
+		public Builder withStoreToLocalUponRemoteRetrieval(boolean storeToLocalUponRemoteRetrieval) {
+			this.storeToLocalUponRemoteRetrieval = storeToLocalUponRemoteRetrieval;
 			return this;
 		}
 		
@@ -591,7 +597,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				result = (Serializable) super.doTask(taskInfo, taskErrorContext);
 				break;
 			case ONLY_THIS:
-				if (entry.submitter.equals(ch.getAddress())) {
+				if (entry.submitter.equals(ch.getAddress().toString())) {
 					if(LOG.isDebugEnabled()) {
 						LOG.debug(
 								"Running task {} [{}] on this node because its affinity is {} and it was scheduled on this node.",
@@ -607,7 +613,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				}
 				break;
 			case THIS:
-				if (!ch.getView().getMembers().contains(entry.submitter) && leader()) {
+				if (!getMemberList().contains(entry.submitter) && leader()) {
 					if(LOG.isDebugEnabled()) {
 						LOG.debug(
 								"Running task {} [{}] on this node because its affinity is {} and the node it was scheduled on is not active and we are leader.",
@@ -618,7 +624,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					});
 					result = (Serializable) super.doTask(taskInfo, taskErrorContext);
 				}
-				else if (entry.submitter.equals(ch.getAddress())) {
+				else if (entry.submitter.equals(ch.getAddress().toString())) {
 					if(LOG.isDebugEnabled()) {
 						LOG.debug(
 								"Running task {} [{}] on this node because its affinity is {} and it was scheduled on this node.",
@@ -813,6 +819,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	private final AtomicBoolean started = new AtomicBoolean();
 	private final Ack acks;
 	private final boolean checkLocalObjectStorageFirst;
+	private final boolean storeToLocalUponRemoteRetrieval;
 	
 	private View view;
 	private int rank = -1;
@@ -840,6 +847,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		queue = Executors.newSingleThreadExecutor();
 		payloadFilter = bldr.payloadFilter.orElseGet(() -> PayloadFilter.nullFilter());
 		alwaysDistribute = bldr.alwaysDistribute;
+		storeToLocalUponRemoteRetrieval = bldr.storeToLocalUponRemoteRetrieval ;
 		restoreTasksAtStartup = bldr.restoreTasksAtStartup;
 		taskStore.ifPresent(ts -> ts.initialise(this));
 		deferStorageUntilStarted = bldr.deferStorageUntilStarted;
@@ -1030,9 +1038,13 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		
 		var id = ClusterID.createNext(UUID.randomUUID().toString());
 		try {
-			return (T)acks.runWithAck(Request.Type.GET_OBJECT, id, clusterSize, () -> {
+			T res = (T)acks.runWithAck(Request.Type.GET_OBJECT, id, clusterSize, () -> {
 				sendRequest(null, new Request(Type.GET_OBJECT, id, new StorePayload(path, key)));
 			}).stream().findFirst().orElse(null);
+			if(storeToLocalUponRemoteRetrieval) {
+				os.put(path, key, res);
+			}
+			return res;
 		}
 		catch(RuntimeException re) {
 			throw re;
@@ -1499,7 +1511,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					LOG.debug("Is a {}, submitting {} [{}] to cluster with classifiers `{}`.", DistributedCallable.class.getName(), id, spec, String.join(", ", task.classifiers()));
 				}
 				
-				var entry = new TaskEntry(id, task, ch.getAddress(), spec);
+				var entry = new TaskEntry(id, task, ch.getAddress().toString(), spec);
 				tasks.put(id, entry);
 				
 				if(task.persistent().orElse(persistentByDefault)) {
@@ -1716,7 +1728,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	}
 
 	private void handleSubmit(ClusterID id, Address sender, DistributedTask<?> task, TaskSpec spec, boolean runNow) {
-		var entry = new TaskEntry(id, task, sender, spec);
+		var entry = new TaskEntry(id, task, sender.toString(), spec);
 		synchronized(tasks) {
 			var was = tasks.get(id);
 			if(was != null) {
@@ -2103,7 +2115,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				run = true;
 				break;
 			case THIS:
-				if (!ch.getView().getMembers().contains(entry.submitter) && leader()) {
+				if (!getMemberList().contains(entry.submitter) && leader()) {
 					if(LOG.isDebugEnabled()) {
 						LOG.debug(
 								"Running immediate task {} [{}] on this node because its affinity is {} and the node it was scheduled on is not active and we are leader",
@@ -2111,7 +2123,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					}
 					run = true;
 				}
-				else if (entry.submitter.equals(ch.getAddress())) {
+				else if (entry.submitter.equals(ch.getAddress().toString())) {
 					if(LOG.isDebugEnabled()) {
 						LOG.debug(
 								"Running immediate task {} [{}] on this node because its affinity is {} and this is the node it was scheduled on",
@@ -2127,7 +2139,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				}
 				break;
 			case ONLY_THIS:
-				if (entry.submitter.equals(ch.getAddress())) {
+				if (entry.submitter.equals(ch.getAddress().toString())) {
 					if(LOG.isDebugEnabled()) {
 						LOG.debug(
 								"Running immediate task {} [{}] on this node because its affinity is {} and this is the node it was scheduled on",
@@ -2157,6 +2169,10 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			run = true;
 		}
 		return run;
+	}
+
+	private List<String> getMemberList() {
+		return ch.getView().getMembers().stream().map(Address::toString).toList();
 	}
 	@SuppressWarnings("unchecked")
 	private <T> Future<T> submitLocal(ClusterID id, TaskSpec spec, LocalHandler<?> handler) {

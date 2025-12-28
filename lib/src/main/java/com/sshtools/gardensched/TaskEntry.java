@@ -17,19 +17,18 @@ package com.sshtools.gardensched;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.jgroups.Address;
 import org.jgroups.util.Promise;
 
 public class TaskEntry {
 	
 	final DistributedTask<?> task;
-	final Address submitter;
+	final String submitter;
 	final Promise<Object> promise = new Promise<>();
 	final AtomicInteger results = new AtomicInteger();
 	final TaskSpec spec;
 	final ClusterID id;
 
-	public TaskEntry(ClusterID id, DistributedTask<?> task, Address submitter, TaskSpec spec) {
+	public TaskEntry(ClusterID id, DistributedTask<?> task, String submitter, TaskSpec spec) {
 		this.task = task;
 		this.id = id;
 		this.submitter = submitter;
@@ -44,7 +43,7 @@ public class TaskEntry {
 		return task;
 	}
 
-	public Address submitter() {
+	public String submitter() {
 		return submitter;
 	}
 
