@@ -15,36 +15,38 @@
     limitations under the License.
 
 -->
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
-  <modelVersion>4.0.0</modelVersion>
-  <parent>
-    <groupId>com.sshtools</groupId>
-    <artifactId>garden-sched</artifactId>
-    <version>0.5.1</version>
-    <relativePath>../</relativePath>
-  </parent>
-  <artifactId>garden-sched-spring</artifactId>
-  <name>Garden Sched - Spring Integration</name>
-  <dependencies>
-    <dependency>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
         <groupId>com.sshtools</groupId>
-        <artifactId>garden-sched-lib</artifactId>
-        <version>${project.version}</version> 
-    </dependency> 
-    <dependency>
-        <groupId>com.fasterxml.jackson.core</groupId>
-        <artifactId>jackson-databind</artifactId>
-        <version>2.17.2</version>
-    </dependency>
-    <dependency>
-        <groupId>com.fasterxml.jackson.datatype</groupId>
-        <artifactId>jackson-datatype-jdk8</artifactId>
-        <version>2.20.1</version>
-    </dependency>
-    <dependency>
-        <groupId>org.springframework</groupId>
-        <artifactId>spring-context</artifactId>
-        <version>7.0.1</version>
-    </dependency>
-  </dependencies> 
+        <artifactId>garden-sched</artifactId>
+        <version>0.5.2</version>
+        <relativePath>../</relativePath>
+    </parent>
+    <artifactId>garden-sched-spring</artifactId>
+    <name>Garden Sched - Spring Integration</name>
+    <dependencies>
+        <dependency>
+            <groupId>com.sshtools</groupId>
+            <artifactId>garden-sched-lib</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.17.2</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jdk8</artifactId>
+            <version>2.17.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
+            <version>6.1.21</version>
+        </dependency>
+    </dependencies>
 </project>
