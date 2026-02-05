@@ -187,6 +187,17 @@ public class SchedController implements BroadcastEventListener {
 		
 		return "Object Stored - " + obj;
 	}
+
+	@RequestMapping(value = "/put-null-object", method = RequestMethod.GET, produces = { "text/plain" })
+	@ResponseBody
+	@ResponseStatus(value = HttpStatus.OK)
+	public String putNullObject(HttpServletRequest request,
+			HttpServletResponse response) {
+		
+		distributedScheduledExecutor.put("OBJECTS", "SomeKey", null);
+		
+		return "Object Stored - " + null;
+	}
 	
 	@RequestMapping(value = "/get-object", method = RequestMethod.GET, produces = { "text/plain" })
 	@ResponseBody
