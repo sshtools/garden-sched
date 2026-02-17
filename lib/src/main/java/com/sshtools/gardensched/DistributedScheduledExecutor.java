@@ -225,9 +225,9 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	}
 
 	private abstract class AbstractHandler<TSK extends DistributedTask<RESULT>, RESULT extends Serializable> implements Runnable {
-		final ClusterID id;
-		final TSK task;
-		final TaskSpec taskSpec;
+		protected final ClusterID id;
+		protected final TSK task;
+		protected final TaskSpec taskSpec;
 
 		public AbstractHandler(ClusterID id, TSK task, TaskSpec taskSpec) {
 			this.id = id;
@@ -243,6 +243,10 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			}
 			
 			TaskInfo tinfo = taskInfo.get(id);
+			if(tinfo == null) {
+				LOG.error("No task info for {}, cannot run task.", id);
+				return;
+			}
 			
 			var retry = new AtomicLong(Integer.MIN_VALUE);
 			var cancel = new AtomicBoolean();
@@ -512,7 +516,12 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 		@Override
 		protected void noRetrigger() {
-			taskInfo.remove(id);
+			if(taskSpec.schedule() == Schedule.FIXED_RATE || taskSpec.schedule() == Schedule.FIXED_DELAY) {
+				LOG.debug("{} is a repeating task, so leaving task.",  id);
+			}
+			else {
+				taskInfo.remove(id);
+			}
 		}
 
 		@Override
@@ -1262,41 +1271,54 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			return doSubmit(id, dtask, DEFAULT_TASK);
 			
 		} else {
-			if (LOG.isDebugEnabled()) {
-				LOG.debug("Not a {}, submitting locally only.", DistributedCallable.class.getName());
+			if(alwaysDistribute) {
+				if(task instanceof SerializableCallable cr)
+					return submit(DistributedCallable.of(cr));
+				else
+					return (Future<T>) submit(DistributedCallable.of(new SerializableCallable<Serializable>() {
+						@Override
+						public Serializable call() throws Exception {
+							return (Serializable)task.call();
+						}
+					}));
 			}
-			var id = ClusterID.createNext(address());
-			
-			var sfut = delegate.submit(() -> {
-				try {
-					return payloadFilter.filter(task).call();
+			else {
+				if (LOG.isDebugEnabled()) {
+					LOG.debug("Not a {}, submitting locally only.", DistributedCallable.class.getName());
 				}
-				finally {
-					localFutures.remove(id);
-				}
-			});
-			
-			var dfut = new AbstractDelegateFuture<>(id, sfut, Collections.emptySet(), Collections.emptyMap()) {
-
-				@Override
-				public boolean cancel(boolean mayInterrupt) {
-					localFutures.remove(id);
-					return super.cancel(mayInterrupt);
-				}
-
-				@Override
-				public TaskInfo info() {
-					return taskInfo.get(id);
-				}
-
-				@Override
-				public void runNow() {
-					throw new UnsupportedOperationException();
-				}
+				var id = ClusterID.createNext(address());
 				
-			};
-			localFutures.put(id, dfut);
-			return dfut;
+				var sfut = delegate.submit(() -> {
+					try {
+						return payloadFilter.filter(task).call();
+					}
+					finally {
+						localFutures.remove(id);
+					}
+				});
+				
+				var dfut = new AbstractDelegateFuture<>(id, sfut, Collections.emptySet(), Collections.emptyMap()) {
+	
+					@Override
+					public boolean cancel(boolean mayInterrupt) {
+						localFutures.remove(id);
+						return super.cancel(mayInterrupt);
+					}
+	
+					@Override
+					public TaskInfo info() {
+						return taskInfo.get(id);
+					}
+	
+					@Override
+					public void runNow() {
+						throw new UnsupportedOperationException();
+					}
+					
+				};
+				localFutures.put(id, dfut);
+				return dfut;
+			}
 		}
 	}
 
@@ -1424,10 +1446,15 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			return (ScheduledFuture<V>)doSubmit(id, dtask, new TaskSpec(Instant.now(), schedule, initialDelay, period, unit, taskTrigger));
 		} else {
 			if(alwaysDistribute) {
-				if(command instanceof SerializableRunnable sr)
-					return doRunnable(schedule, DistributedRunnable.of(sr), initialDelay, period, unit, null);
-				else
-					return doRunnable(schedule, DistributedRunnable.of(() -> command.run()), initialDelay, period, unit, null);
+				if(command instanceof SerializableRunnable sr) {
+					return doRunnable(schedule, DistributedRunnable.of(sr), initialDelay, period, unit, taskTrigger);
+				}
+				else if(command instanceof Serializable) {
+					return doRunnable(schedule, DistributedRunnable.of(()->command.run()), initialDelay, period, unit, taskTrigger);
+				}
+				else {
+					return doRunnable(schedule, DistributedRunnable.local(() -> command.run()), initialDelay, period, unit, taskTrigger);
+				}
 			}
 			else {
 				
@@ -1460,6 +1487,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					break;
 				case FIXED_RATE:
 					sfut = (ScheduledFuture<V>) delegate.scheduleAtFixedRate(payloadFilter.filter(command), initialDelay, period, unit);
+					break;
 				default:
 					throw new IllegalStateException();
 				}

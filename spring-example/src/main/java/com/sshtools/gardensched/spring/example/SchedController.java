@@ -356,6 +356,23 @@ public class SchedController implements BroadcastEventListener {
 		
 		return "Job Started";
 	}
+	
+	@RequestMapping(value = "/start-lambda-task", method = RequestMethod.GET, produces = { "text/plain" })
+	@ResponseBody
+	@ResponseStatus(value = HttpStatus.OK)
+	public String startLambdaTask(HttpServletRequest request,
+			HttpServletResponse response) {
+		
+//		distributedScheduledExecutor.scheduleAtFixedRate(DistributedRunnable.local(() -> {
+//			System.out.println("Hello from Lambda Task on " + TaskContext.get().address());
+//		}), 5, 5, TimeUnit.SECONDS);
+		
+		distributedScheduledExecutor.scheduleAtFixedRate(() -> {
+			System.out.println("Hello from Lambda Task" + TaskContext.get().address());
+		}, 5, 5, TimeUnit.SECONDS);
+		
+		return "Job Started";
+	}
 
 	@Override
 	public void accept(Address sender, Serializable event) {

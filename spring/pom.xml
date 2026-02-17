@@ -22,7 +22,7 @@
     <parent>
         <groupId>com.sshtools</groupId>
         <artifactId>garden-sched</artifactId>
-        <version>0.9.0-SNAPSHOT</version>
+        <version>0.9.0</version>
         <relativePath>../</relativePath>
     </parent>
     <artifactId>garden-sched-spring</artifactId>
