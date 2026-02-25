@@ -47,7 +47,7 @@ public class JsonPayloadSerializer implements PayloadSerializer {
 	public void serialize(Serializable task, DataOutput output) throws IOException {
 		var json = mapper.writeValueAsString(task);
 		if(LOG.isDebugEnabled()) {
-			LOG.debug("Serialised payload: {}", json);
+			LOG.debug("Serialised payload of type {}: {}", task == null ? null : task.getClass().getName(), json);
 		}
 		output.writeUTF(json);
 	}
@@ -62,7 +62,7 @@ public class JsonPayloadSerializer implements PayloadSerializer {
 			currentClassLocator.set(classLocator);
 			var json = input.readUTF();
 			if(LOG.isDebugEnabled()) {
-				LOG.debug("Deserialising payload: {}", json);
+				LOG.debug("Deserialising payload of type {}: {}", type, json);
 			}
 			return mapper.readValue(json, Serializable.class);
 		}

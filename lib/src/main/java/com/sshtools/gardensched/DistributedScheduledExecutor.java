@@ -1049,9 +1049,21 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		try {
 			T res = (T)acks.runWithAck(Request.Type.GET_OBJECT, id, clusterSize, () -> {
 				sendRequest(null, new Request(Type.GET_OBJECT, id, new StorePayload(path, key)));
-			}).stream().findFirst().orElse(null);
+			}).stream().filter(f -> f != null).findFirst().orElse(null);
 			if(storeToLocalUponRemoteRetrieval) {
-				os.put(path, key, res);
+				if(res == null) {
+					if (LOG.isDebugEnabled()) {
+						LOG.debug("null returned, assuming key does not exist, so not caching locall for {} / {}.", path, key);
+					}
+				}
+				else {
+					/*
+					 * TODO make this better. It is ambiguous whether null means a null value
+					 * or if the key does not exist. For now we have to take it to mean it
+					 * doesn't exist.
+					 */
+					os.put(path, key, res);
+				}
 			}
 			return res;
 		}
@@ -1887,7 +1899,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			LOG.debug("Received HAS_OBJECT from {} for {}", sender);
 		}
 		objectStore.ifPresentOrElse(os -> {
-			sendRequest(sender, new Request(Request.Type.ACK, req.id(), new AckPayload(Request.Type.REMOVE_OBJECT, os.has(store.path(), store.key()))));
+			sendRequest(sender, new Request(Request.Type.ACK, req.id(), new AckPayload(Request.Type.HAS_OBJECT, os.has(store.path(), store.key()))));
 		}, () -> {
 			throw new IllegalStateException("No object store configured.");
 		});
@@ -1908,7 +1920,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	private void handleRemoveObject(Address sender, Request req) {
 		StorePayload store = req.payload();
 		if(LOG.isDebugEnabled()) {
-			LOG.debug("Received STORE_OBJECT from {} for {}", sender);
+			LOG.debug("Received REMOVE_OBJECT from {} for {}", sender, req.id());
 		}
 		objectStore.ifPresentOrElse(os -> {
 			var removed = os.remove(store.path(), store.key()); 
@@ -1929,7 +1941,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			
 		StorePayload store = req.payload();
 		if(LOG.isDebugEnabled()) {
-			LOG.debug("Received STORE from {} for {}", sender);
+			LOG.debug("Received STORED_OBJECT from {} for {}", sender, req.id());
 		}
 		objectStore.ifPresentOrElse(os -> {
 			if(os.remove(store.path(), store.key())) {

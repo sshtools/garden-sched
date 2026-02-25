@@ -6,11 +6,10 @@
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
 		<version>4.0.0</version>
-		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.sshtools</groupId>
 	<artifactId>garden-sched-spring-example</artifactId>
-	<version>0.9.0</version>
+	<version>0.9.1</version>
 	<name>Garden Sched - Spring Example</name>
 	<description>Demo project for Garden  Sched and Spring Boot</description>
 	
