@@ -17,12 +17,17 @@ package com.sshtools.gardensched;
 
 import java.io.Serializable;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public interface ObjectStore {
+	int size(String path);
+	
 	boolean has(String path, Serializable key);
 	
-	Serializable get(String path, Serializable key);
+	<T extends Serializable> Set<T> keySet(String path); 
+	
+	<T extends Serializable> T get(String path, Serializable key);
 
 	void put(String path, Serializable key, Serializable value);
 	
@@ -59,9 +64,21 @@ public interface ObjectStore {
 				return objects(path).containsKey(key);
 			}
 			
+			@SuppressWarnings("unchecked")
 			@Override
-			public Serializable get(String path, Serializable key) {
-				return objects(path).get(key);
+			public <T extends Serializable> T get(String path, Serializable key) {
+				return (T) objects(path).get(key);
+			}
+
+			@Override
+			public int size(String path) {
+				return objects(path).size();
+			}
+
+			@SuppressWarnings("unchecked")
+			@Override
+			public <T extends Serializable> Set<T> keySet(String path) {
+				return (Set<T>) objects(path).keySet();
 			}
 		};
 	}

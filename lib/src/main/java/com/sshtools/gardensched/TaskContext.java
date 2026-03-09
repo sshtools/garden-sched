@@ -15,6 +15,8 @@
  */
 package com.sshtools.gardensched;
 
+import java.util.concurrent.TimeUnit;
+
 import org.jgroups.Address;
 
 public abstract class TaskContext {
@@ -31,6 +33,14 @@ public abstract class TaskContext {
 	public abstract ClusterID id();
 	
 	public abstract Address address();
+	
+	public abstract void rescheduleWithFixedRate(long delay, long period, TimeUnit unit);
+	
+	public abstract void rescheduleWithFixedDelay(long delay, long period, TimeUnit unit);
+
+	public abstract void reschedule(long delay, TimeUnit unit);
+
+	public abstract void reschedule(TaskTrigger trigger);
 
 	public abstract TaskProgress progress();
 	

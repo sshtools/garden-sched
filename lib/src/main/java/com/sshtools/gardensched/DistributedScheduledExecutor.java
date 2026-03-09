@@ -25,10 +25,10 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -45,6 +45,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 import org.jgroups.Address;
@@ -227,7 +228,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	private abstract class AbstractHandler<TSK extends DistributedTask<RESULT>, RESULT extends Serializable> implements Runnable {
 		protected final ClusterID id;
 		protected final TSK task;
-		protected final TaskSpec taskSpec;
+		protected TaskSpec taskSpec;
 
 		public AbstractHandler(ClusterID id, TSK task, TaskSpec taskSpec) {
 			this.id = id;
@@ -250,6 +251,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			
 			var retry = new AtomicLong(Integer.MIN_VALUE);
 			var cancel = new AtomicBoolean();
+			var newSpec = new AtomicReference<TaskSpec>();
 			try {
 				
 				TaskContext.ctx.set(new TaskContext() {
@@ -281,6 +283,27 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					public boolean isCancelled() {
 						return DistributedScheduledExecutor.this.future(id).isCancelled();
 					}
+
+					@Override
+					public void rescheduleWithFixedRate(long delay, long period, TimeUnit unit) {
+						newSpec.set(new TaskSpec(Instant.now(), Schedule.FIXED_RATE, period, delay, unit, taskSpec.trigger()));
+					}
+
+					@Override
+					public void rescheduleWithFixedDelay(long delay, long period, TimeUnit unit) {
+						newSpec.set(new TaskSpec(Instant.now(), Schedule.FIXED_DELAY, period, delay, unit, taskSpec.trigger()));
+					}
+
+					@Override
+					public void reschedule(long delay, TimeUnit unit) {
+						newSpec.set(new TaskSpec(Instant.now(), Schedule.ONE_SHOT, delay, 0, unit, taskSpec.trigger()));
+					}
+
+					@Override
+					public void reschedule(TaskTrigger trigger) {
+						newSpec.set(new TaskSpec(Instant.now(), Schedule.TRIGGER, 0, 0, TimeUnit.MILLISECONDS, trigger));
+					}
+					
 				});
 				
 				doTask(tinfo, new TaskCompletionContext() {
@@ -305,9 +328,31 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					future(id).cancel(false);
 				}
 				else if(retry.get() != Integer.MIN_VALUE) {
-					LOG.info("Retrying {} in {} ms because error handling requested it.", id, retry.get());
+					noRetrigger();
 					
-					throw new UnsupportedOperationException("Retrying is not yet supported.");
+					LOG.info("Retrying {} in {} ms because error handling requested it.", id, retry.get());
+
+					/* Broadcast to everyone the same task, but marked to fire immediately */
+					var spec = new TaskSpec(Instant.now(), Schedule.ONE_SHOT, retry.get(), 0, TimeUnit.MILLISECONDS, null);
+					var req = new Request(Request.Type.SUBMIT, id, new SubmitPayload((DistributedTask<?>)task, spec, true));
+					try {
+						sendSubmitRequest(null, req);
+					} catch (Exception e) {
+						LOG.error("Failed to re-submit task {}", id, e);
+					}
+				}
+				else if(newSpec.get() != null) {
+
+					noRetrigger();
+					
+					LOG.info("Rescheduling {} with new spec because task requested it.", id);
+					
+					var req = new Request(Request.Type.SUBMIT, id, new SubmitPayload((DistributedTask<?>)task, newSpec.get(), true));
+					try {
+						sendSubmitRequest(null, req);
+					} catch (Exception e) {
+						LOG.error("Failed to re-submit task {}", id, e);
+					}
 				}
 				else {
 					if(taskSpec.schedule() == Schedule.TRIGGER) {
@@ -706,11 +751,17 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					Request req = Util.streamableFromByteBuffer(Request.class, bmsg.getBytes(),
 							msg.getOffset(), msg.getLength());
 					switch (req.type()) {
+					case KEYS:
+						handleKeys(msg.getSrc(), req);
+						break;
 					case GET_OBJECT:
 						handleGetObject(msg.getSrc(), req);
 						break;
 					case HAS_OBJECT:
 						handleHasObject(msg.getSrc(), req);
+						break;
+					case OBJECT_COUNT:
+						handleObjectCount(msg.getSrc(), req);
 						break;
 					case REMOVE_OBJECT:
 						handleRemoveObject(msg.getSrc(), req);
@@ -838,6 +889,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	private boolean startPaused;
 	private Semaphore sem;
 	private boolean restoreTasksAtStartup;
+	private final Optional<DistributedObjectStore> distributedObjectStore;
 	
 	private DistributedScheduledExecutor(Builder bldr) throws Exception {
 		objectStore = bldr.objectStore;
@@ -861,6 +913,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		taskStore.ifPresent(ts -> ts.initialise(this));
 		deferStorageUntilStarted = bldr.deferStorageUntilStarted;
 		acks = new Ack(acknowledgeTimeout);
+		distributedObjectStore = objectStore.map(os -> new DistributedObjectStore(acks, os, this, checkLocalObjectStorageFirst, storeToLocalUponRemoteRetrieval));
 		
 		ch = new JChannel(bldr.props);
 		ch.name(bldr.groupName);
@@ -920,6 +973,16 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	@Override
 	public boolean awaitTermination(long timeout, TimeUnit timeUnit) throws InterruptedException {
 		return delegate.awaitTermination(timeout, timeUnit);
+	}
+	
+	/**
+	 * Get the distributed object store, if configured. 
+	 * 
+	 * @return object store
+	 * @throws IllegalStateException if no object store has been configured
+	 */
+	public ObjectStore objectStore() {
+		return distributedObjectStore.orElseThrow(() -> new IllegalStateException("No object store has been configured.") );
 	}
 	
 	/**
@@ -1029,85 +1092,6 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	
 	public int rank() {
 		return rank;
-	}
-	
-	public void put(String path, Serializable key, Serializable value) {
-		var os = checkObjectStore();
-		os.put(path, key, value);
-		sendRequest(null, new Request(Type.STORED_OBJECT, new StorePayload(path, key)));
-	}
-
-	@SuppressWarnings("unchecked")
-	public <T extends Serializable> T get(String path, Serializable key) {
-		var os = checkObjectStore();
-
-		if(checkLocalObjectStorageFirst && os.has(path, key)) {
-			return (T)os.get(path, key);
-		}
-		
-		var id = ClusterID.createNext(UUID.randomUUID().toString());
-		try {
-			T res = (T)acks.runWithAck(Request.Type.GET_OBJECT, id, clusterSize, () -> {
-				sendRequest(null, new Request(Type.GET_OBJECT, id, new StorePayload(path, key)));
-			}).stream().filter(f -> f != null).findFirst().orElse(null);
-			if(storeToLocalUponRemoteRetrieval) {
-				if(res == null) {
-					if (LOG.isDebugEnabled()) {
-						LOG.debug("null returned, assuming key does not exist, so not caching locall for {} / {}.", path, key);
-					}
-				}
-				else {
-					/*
-					 * TODO make this better. It is ambiguous whether null means a null value
-					 * or if the key does not exist. For now we have to take it to mean it
-					 * doesn't exist.
-					 */
-					os.put(path, key, res);
-				}
-			}
-			return res;
-		}
-		catch(RuntimeException re) {
-			throw re;
-		}
-		catch(Exception e) {
-			throw new IllegalStateException("Failed to get from object store.", e);
-		}
-	}
-
-	public boolean has(String path, Serializable key) {
-		var os = checkObjectStore();
-		if(checkLocalObjectStorageFirst && os.has(path, key)) {
-			return true;
-		}
-		
-		var id = ClusterID.createNext(UUID.randomUUID().toString());
-		try {
-			return acks.runWithAck(Request.Type.HAS_OBJECT, id, clusterSize, () -> {
-				sendRequest(null, new Request(Type.HAS_OBJECT, id, new StorePayload(path, key)));
-			}).stream().map(s -> (Boolean)s).filter(t -> t).findFirst().orElse(false);
-		}
-		catch(RuntimeException re) {
-			throw re;
-		}
-		catch(Exception e) {
-			throw new IllegalStateException("Failed to check object store.", e);
-		}
-	}
-	
-	public boolean remove(String path, Serializable key) {
-		var id = ClusterID.createNext(UUID.randomUUID().toString());
-		try {
-			return acks.runWithAck(Request.Type.REMOVE_OBJECT, id, clusterSize, () -> {
-				sendRequest(null, new Request(Type.REMOVE_OBJECT, id, new StorePayload(path, key)));
-			}).stream().map(s -> (Boolean)s).filter(t -> t).findFirst().orElse(false);
-		}
-		catch(RuntimeException re) {
-			throw re;
-		}
-		catch(Exception e) {
-			throw new IllegalStateException("Failed to remove from object store.", e);
-		}
 	}
 
 	public void removeBroadcastListener(BroadcastEventListener listener) {
@@ -1347,6 +1331,10 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		else
 			/* TODO */
 			throw new UnsupportedOperationException();
+	}
+	
+	public int clusterSize() {
+		return clusterSize;
 	}
 
 	public View view() {
@@ -1896,10 +1884,22 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	private void handleHasObject(Address sender, Request req) {
 		StorePayload store = req.payload();
 		if(LOG.isDebugEnabled()) {
-			LOG.debug("Received HAS_OBJECT from {} for {}", sender);
+			LOG.debug("Received HAS_OBJECT from {} for {} / {}", sender, store.path(), store.key());
 		}
 		objectStore.ifPresentOrElse(os -> {
 			sendRequest(sender, new Request(Request.Type.ACK, req.id(), new AckPayload(Request.Type.HAS_OBJECT, os.has(store.path(), store.key()))));
+		}, () -> {
+			throw new IllegalStateException("No object store configured.");
+		});
+	}
+
+	private void handleObjectCount(Address sender, Request req) {
+		StorePayload store = req.payload();
+		if(LOG.isDebugEnabled()) {
+			LOG.debug("Received OBJECT_COUNT from {} for {}", sender, store.path());
+		}
+		objectStore.ifPresentOrElse(os -> {
+			sendRequest(sender, new Request(Request.Type.ACK, req.id(), new AckPayload(Request.Type.OBJECT_COUNT, os.size(store.path()))));
 		}, () -> {
 			throw new IllegalStateException("No object store configured.");
 		});
@@ -1911,7 +1911,29 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			LOG.debug("Received GET_OBJECT from {} for {}", sender, req.id());
 		}
 		objectStore.ifPresentOrElse(os -> {
-			sendRequest(sender, new Request(Request.Type.ACK, req.id(), new AckPayload(Request.Type.GET_OBJECT, os.get(store.path(), store.key()))));
+			sendRequest(sender, new Request(
+					Request.Type.ACK, 
+					req.id(), 
+					new AckPayload(Request.Type.GET_OBJECT, os.get(store.path(), store.key()))
+				)
+			);
+		}, () -> {
+			throw new IllegalStateException("No object store configured.");
+		});
+	}
+
+	private void handleKeys(Address sender, Request req) {
+		StorePayload store = req.payload();
+		if(LOG.isDebugEnabled()) {
+			LOG.debug("Received KEYS from {} for {}", sender, req.id());
+		}
+		objectStore.ifPresentOrElse(os -> {
+			sendRequest(sender, new Request(
+					Request.Type.ACK, 
+					req.id(), 
+					new AckPayload(Request.Type.KEYS, (Serializable)new LinkedHashSet<>(os.keySet(store.path())))
+				)
+			);
 		}, () -> {
 			throw new IllegalStateException("No object store configured.");
 		});
@@ -2092,7 +2114,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		});
 	}
 
-	private void sendRequest(Address recipient, Request repreq) {
+	void sendRequest(Address recipient, Request repreq) {
 		try {
 			if(LOG.isDebugEnabled()) {
 				LOG.debug("Sending request: {} to {}", repreq.type(), recipient == null ? "ALL" : recipient);
@@ -2254,9 +2276,5 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		default:
 			return 1;
 		}
-	}
-	
-	private ObjectStore checkObjectStore() {
-		return objectStore.orElseThrow(() -> new IllegalStateException("No object store has been configured.") );
 	}
 }

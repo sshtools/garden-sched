@@ -29,7 +29,8 @@ import com.sshtools.gardensched.DistributedRunnable.DistributedRunnableImpl;
 
 public class Request implements Streamable {
 	public enum Type {
-		SUBMIT, EXECUTING, RESULT, REMOVE, UNLOCK, UNLOCKED, LOCK, LOCKED,EVENT, START_PROGRESS, PROGRESS, PROGRESS_MESSAGE, ACK, STORED_OBJECT, REMOVE_OBJECT, HAS_OBJECT, GET_OBJECT
+		SUBMIT, EXECUTING, RESULT, REMOVE, UNLOCK, UNLOCKED, LOCK, LOCKED, EVENT, START_PROGRESS, PROGRESS,
+		PROGRESS_MESSAGE, ACK, STORED_OBJECT, REMOVE_OBJECT, HAS_OBJECT, GET_OBJECT, OBJECT_COUNT, KEYS
 	}
 	
 	public final static class StorePayload implements Streamable {
@@ -442,10 +443,12 @@ public class Request implements Streamable {
 		case ACK:
 			payload = new AckPayload();
 			break;
+		case OBJECT_COUNT:
 		case STORED_OBJECT:
 		case REMOVE_OBJECT:
 		case GET_OBJECT:
 		case HAS_OBJECT:
+		case KEYS:
 			payload = new StorePayload();
 			break;
 		default:
