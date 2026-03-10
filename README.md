@@ -1,6 +1,6 @@
 # Garden Sched
 
-A distributed task scheduler based on JGroups.
+A distributed task scheduler, shared cache and distributed lock based on JGroups.
 
 ## Features
 
@@ -20,10 +20,12 @@ There are some additional features that are not strictly relating to scheduling.
 
  * Events. Uses the same serialization mechanism, and allows an event (effectively just a serializable object) to be broadcast to all nodes. 
  * Shared Object Store. Again taking advantage of the same serialization mechanism, arbitrary objects may be placed in a key/value store. Other nodes can request the object by its key, and whatever node has it will return it. Can be used  as the basis of a clustered cache.
+ * Distributed locks. 
  
 ## Limitations
 
  * All tasks must be `Serializable`. 
+ * Distributed locks are simplistic and don't yet deal with nodes going down.
 
 
 ## Installation

@@ -296,7 +296,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 					@Override
 					public void reschedule(long delay, TimeUnit unit) {
-						newSpec.set(new TaskSpec(Instant.now(), Schedule.ONE_SHOT, delay, 0, unit, taskSpec.trigger()));
+						newSpec.set(new TaskSpec(Instant.now(), Schedule.ONE_SHOT, delay, delay, unit, taskSpec.trigger()));
 					}
 
 					@Override
@@ -347,7 +347,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					
 					LOG.info("Rescheduling {} with new spec because task requested it.", id);
 					
-					var req = new Request(Request.Type.SUBMIT, id, new SubmitPayload((DistributedTask<?>)task, newSpec.get(), true));
+					var req = new Request(Request.Type.SUBMIT, id, new SubmitPayload((DistributedTask<?>)task, newSpec.get(), false));
 					try {
 						sendSubmitRequest(null, req);
 					} catch (Exception e) {

@@ -20,7 +20,7 @@
     <parent>
 	    <groupId>com.sshtools</groupId>
 	    <artifactId>garden-sched</artifactId>
-	    <version>0.9.2</version>
+	    <version>0.9.3</version>
         <relativePath>../</relativePath>
     </parent>
     <artifactId>garden-sched-lib</artifactId>
