@@ -147,7 +147,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 	}
 
-	private abstract class AbstractHandler<TSK extends DistributedTask<RESULT>, RESULT extends Serializable> implements Runnable {
+	private abstract class AbstractHandler<TSK extends DistributedTask<RESULT>, RESULT> implements Runnable {
 		protected final ClusterID id;
 		protected final TSK task;
 		protected TaskSpec taskSpec;
@@ -382,7 +382,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 	}
 	
-	private class LocalHandler<RESULT extends Serializable> extends AbstractHandler<DistributedTask<RESULT>, RESULT> implements Runnable {
+	private class LocalHandler<RESULT> extends AbstractHandler<DistributedTask<RESULT>, RESULT> implements Runnable {
 
 		public LocalHandler(ClusterID id, DistributedTask<RESULT> task, TaskSpec taskSpec) {
 			super(id, task, taskSpec);
@@ -1165,14 +1165,11 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			return (ScheduledFuture<V>)doSubmit(id, dtask, new TaskSpec(Instant.now(), schedule, initialDelay, period, unit, taskTrigger));
 		} else {
 			if(alwaysDistribute) {
-				if(command instanceof SerializableRunnable sr) {
-					return doRunnable(schedule, DistributedRunnable.of(sr), initialDelay, period, unit, taskTrigger);
-				}
-				else if(command instanceof Serializable) {
-					return doRunnable(schedule, DistributedRunnable.of(()->command.run()), initialDelay, period, unit, taskTrigger);
+				if(command instanceof Serializable) {
+					return doRunnable(schedule, DistributedRunnable.of(command), initialDelay, period, unit, taskTrigger);
 				}
 				else {
-					return doRunnable(schedule, DistributedRunnable.local(() -> command.run()), initialDelay, period, unit, taskTrigger);
+					return doRunnable(schedule, DistributedRunnable.local(command), initialDelay, period, unit, taskTrigger);
 				}
 			}
 			else {

@@ -31,12 +31,12 @@ import java.util.Set;
 import org.jgroups.util.Streamable;
 import org.jgroups.util.UUID;
 
-public interface DistributedTask<TASK extends Serializable> extends Streamable {
+public interface DistributedTask<TASK> extends Streamable {
 	
 	public final static Affinity DEFAULT_AFFINTY = Affinity.ANY;
 	public final static ConflictResolution DEFAULT_CONFLICT_RESOLUTION = ConflictResolution.THROW;
 	
-	public abstract class AbstractTask<TASK extends Serializable> implements DistributedTask<TASK> {
+	public abstract class AbstractTask<TASK> implements DistributedTask<TASK> {
 		
 		private Affinity affinity;
 		private String id;
@@ -159,7 +159,7 @@ public interface DistributedTask<TASK extends Serializable> extends Streamable {
 
 	}
 	
-	public static abstract class AbstractBuilder<BLDR extends AbstractBuilder<BLDR, TSK, DTSK>, TSK extends Serializable, DTSK extends DistributedTask<TSK>> {
+	public static abstract class AbstractBuilder<BLDR extends AbstractBuilder<BLDR, TSK, DTSK>, TSK, DTSK extends DistributedTask<TSK>> {
 
 		protected final TSK task;
 		

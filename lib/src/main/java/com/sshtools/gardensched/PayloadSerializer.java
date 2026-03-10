@@ -25,22 +25,21 @@ import java.io.DataInputStream;
 import java.io.DataOutput;
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.io.Serializable;
 import java.util.Base64;
 
 public interface PayloadSerializer {
 
-	void serialize(Serializable object, DataOutput output) throws IOException;
+	void serialize(Object object, DataOutput output) throws IOException;
 
-	Serializable deserialize(Class<? extends Serializable> type, DataInput input) throws IOException;
+	<O> O deserialize(Class<O> type, DataInput input) throws IOException;
 	
-	default String serializeToString(Serializable object) throws IOException {
+	default String serializeToString(Object object) throws IOException {
 		var baos = new ByteArrayOutputStream();
 		serialize(object, new DataOutputStream(baos));
 		return Base64.getEncoder().encodeToString(baos.toByteArray());
 	}
 
-	default Serializable deserializeFromString(Class<? extends Serializable> type, String input) throws IOException {
+	default Object deserializeFromString(Class<?> type, String input) throws IOException {
 		return deserialize(type, new DataInputStream(new ByteArrayInputStream(Base64.getDecoder().decode(input))));
 	}
 
@@ -48,12 +47,12 @@ public interface PayloadSerializer {
 		return new PayloadSerializer() {
 
 			@Override
-			public void serialize(Serializable task, DataOutput output) throws IOException {
+			public void serialize(Object task, DataOutput output) throws IOException {
 				objectToStream(task, output);
 			}
 
 			@Override
-			public Serializable deserialize(Class<? extends Serializable> type, DataInput input) throws IOException {
+			public <O> O deserialize(Class<O> type, DataInput input) throws IOException {
 				try {
 					return objectFromStream(input);
 				} catch (ClassNotFoundException e) {

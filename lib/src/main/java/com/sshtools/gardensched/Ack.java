@@ -32,10 +32,6 @@ public class Ack {
 	
 	private record AckEntry(Semaphore semaphore, List<Serializable> results) {}
 	
-	public interface ThrowingRunnable {
-		void run() throws Exception;
-	}
-	
 	private final static Logger LOG = LoggerFactory.getLogger(Ack.class);
 
 	private final Map<Request.Type, Map<ClusterID, AckEntry>> acks = new HashMap<>();
@@ -83,7 +79,7 @@ public class Ack {
 		try {
 			sem.acquire(size);
 			var entry = putAck(type, id, sem);
-			task.run();
+			task.execute();
 			
 			/* Wait for everyone to acknowledge via REMOVED */
 			if(LOG.isDebugEnabled()) {

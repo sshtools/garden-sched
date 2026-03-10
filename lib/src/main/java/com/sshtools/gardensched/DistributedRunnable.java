@@ -19,21 +19,21 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 
-public interface DistributedRunnable extends Runnable, DistributedTask<SerializableRunnable> {
+public interface DistributedRunnable extends Runnable, DistributedTask<Runnable> {
 
-	public final class DistributedRunnableImpl extends AbstractTask<SerializableRunnable> implements DistributedRunnable {
+	public final class DistributedRunnableImpl extends AbstractTask<Runnable> implements DistributedRunnable {
 		
-		private SerializableRunnable task;
+		private Runnable task;
 		
 		public DistributedRunnableImpl() {
 		}
 
-		public DistributedRunnableImpl(AbstractBuilder<?, ?, ?> bldr, SerializableRunnable task) {
+		public DistributedRunnableImpl(AbstractBuilder<?, ?, ?> bldr, Runnable task) {
 			super(bldr);
 			this.task = task;
 		}
 
-		public SerializableRunnable task() {
+		public Runnable task() {
 			return task;
 		}
 
@@ -61,13 +61,13 @@ public interface DistributedRunnable extends Runnable, DistributedTask<Serializa
 		}
 	}
 	
-	public final static class Builder  extends AbstractBuilder<Builder, SerializableRunnable, DistributedRunnable > {
+	public final static class Builder  extends AbstractBuilder<Builder, Runnable, DistributedRunnable > {
 
-		public Builder( SerializableRunnable  task) {
+		public Builder( Runnable  task) {
 			super(task);
 		}
 
-		public Builder(String id,  SerializableRunnable task) {
+		public Builder(String id,  Runnable task) {
 			super(id, task);
 		}
 
@@ -78,23 +78,23 @@ public interface DistributedRunnable extends Runnable, DistributedTask<Serializa
 	}
 
 
-	public static DistributedRunnable of(String id, SerializableRunnable task, String... classifiers) {
+	public static DistributedRunnable of(String id, Runnable task, String... classifiers) {
 		return builder(id, task).withClassifiers(classifiers).build();
 	}
 
-	public static DistributedRunnable local(SerializableRunnable task, String... classifiers) {
+	public static DistributedRunnable local(Runnable task, String... classifiers) {
 		return builder(null, task).withAffinity(Affinity.LOCAL).withClassifiers(classifiers).build();
 	}
 
-	public static DistributedRunnable of(SerializableRunnable task, String... classifiers) {
+	public static DistributedRunnable of(Runnable task, String... classifiers) {
 		return builder(null, task).withClassifiers(classifiers).build();
 	}
 
-	public static Builder builder(SerializableRunnable task) {
+	public static Builder builder(Runnable task) {
 		return builder(null, task);
 	}
 	
-	public static Builder builder(String id, SerializableRunnable task) {
+	public static Builder builder(String id, Runnable task) {
 		return new Builder(id, task);
 	}
 
