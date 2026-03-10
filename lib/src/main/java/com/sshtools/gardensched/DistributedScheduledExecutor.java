@@ -631,6 +631,8 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		restoreTasksAtStartup = bldr.restoreTasksAtStartup;
 		taskStore.ifPresent(ts -> ts.initialise(this));
 		deferStorageUntilStarted = bldr.deferStorageUntilStarted;
+		machine.addComponent(this);
+		machine.addReceiver(this);
 		
 		if(startPaused) {
 			LOG.info("Starting paused (all {} threads locked).", threads);
@@ -791,6 +793,8 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	@Override
 	public void prepareClose() {
         if (!isTerminated()) {
+    		machine.removeComponent(this);
+    		machine.removeReceiver(this);
 
     		/* Cancel tasks on shutdown so only actually running tasks will remain subject
     		 * to the timeout */ 
