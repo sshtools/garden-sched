@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright © 2025 JAdaptive Limited (support@jadaptive.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,14 +45,14 @@ public interface DistributedRunnable extends Runnable, DistributedTask<Serializa
 		@Override
 		public void writeTo(DataOutput out) throws IOException {
 			super.writeTo(out);
-			DistributedScheduledExecutor.currentSerializer().serialize(task, out);
+			DistributedMachine.currentSerializer().serialize(task, out);
 		}
 
 		@Override
 		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
 			super.readFrom(in);
-			task = (SerializableRunnable) DistributedScheduledExecutor.currentSerializer().deserialize(SerializableRunnable.class, in);
-			task = (SerializableRunnable) DistributedScheduledExecutor.currentFilter().filter(task);
+			task = (SerializableRunnable) DistributedMachine.currentSerializer().deserialize(SerializableRunnable.class, in);
+			task = (SerializableRunnable) DistributedMachine.currentFilter().filter(task);
 		}
 
 		@Override

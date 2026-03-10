@@ -15,25 +15,13 @@
  */
 package com.sshtools.gardensched;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
+import java.util.List;
 
-public interface SerializableJob extends SerializableRunnable {
+import org.jgroups.Message;
 
-	default void run() {
-		try {
-			execute();
-		}
-		catch(IOException ioe) {
-			throw new UncheckedIOException(ioe);
-		}
-		catch(RuntimeException re) {
-			throw re;
-		}
-		catch(Exception e) {
-			throw new IllegalStateException(e.getMessage() == null ? "Job failed." : e.getMessage(), e);
-		}
-	}
+public interface MessageReceiver {
+
+	List<Request.Type> types();
 	
-	void execute() throws Exception;
+	void receive(Message msg, Request request);
 }

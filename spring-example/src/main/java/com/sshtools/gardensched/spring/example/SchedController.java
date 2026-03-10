@@ -19,6 +19,8 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 
 import com.sshtools.gardensched.BroadcastEventListener;
 import com.sshtools.gardensched.ClusterID;
+import com.sshtools.gardensched.DistributedEvents;
+import com.sshtools.gardensched.DistributedObjectStore;
 import com.sshtools.gardensched.DistributedRunnable;
 import com.sshtools.gardensched.DistributedScheduledExecutor;
 import com.sshtools.gardensched.TaskContext;
@@ -38,9 +40,15 @@ public class SchedController implements BroadcastEventListener {
 	@Autowired
 	private DistributedScheduledExecutor distributedScheduledExecutor;
 	
+	@Autowired
+	private DistributedObjectStore distributedObjectStore;
+	
+	@Autowired
+	private DistributedEvents distributedEvents;
+	
 	@PostConstruct
 	private void setup() {
-		distributedScheduledExecutor.addBroadcastListener(this);
+		distributedEvents.addBroadcastListener(this);
 	}
 	
 	@RequestMapping(value = "/list-jobs", method = RequestMethod.GET, produces = { "text/html" })
@@ -183,7 +191,7 @@ public class SchedController implements BroadcastEventListener {
 			HttpServletResponse response) {
 		
 		var obj = new TestObject((int)(Math.random() * 10), (int)(Math.random() * 10), (int)(Math.random() * 10));
-		distributedScheduledExecutor.objectStore().put("OBJECTS", "SomeKey", obj);
+		distributedObjectStore.put("OBJECTS", "SomeKey", obj);
 		
 		return "Object Stored - " + obj;
 	}
@@ -194,7 +202,7 @@ public class SchedController implements BroadcastEventListener {
 	public String putNullObject(HttpServletRequest request,
 			HttpServletResponse response) {
 		
-		distributedScheduledExecutor.objectStore().put("OBJECTS", "SomeKey", null);
+		distributedObjectStore.put("OBJECTS", "SomeKey", null);
 		
 		return "Object Stored - " + null;
 	}
@@ -205,7 +213,7 @@ public class SchedController implements BroadcastEventListener {
 	public String getObject(HttpServletRequest request,
 			HttpServletResponse response) {
 		
-		return "Object Retrieved - " + distributedScheduledExecutor.objectStore().get("OBJECTS", "SomeKey");
+		return "Object Retrieved - " + distributedObjectStore.get("OBJECTS", "SomeKey");
 	}
 	
 	@RequestMapping(value = "/object-count", method = RequestMethod.GET, produces = { "text/plain" })
@@ -214,7 +222,7 @@ public class SchedController implements BroadcastEventListener {
 	public int countObjects(HttpServletRequest request,
 			HttpServletResponse response) {
 		
-		return distributedScheduledExecutor.objectStore().size("OBJECTS");
+		return distributedObjectStore.size("OBJECTS");
 	}
 	
 	@RequestMapping(value = "/remove-object", method = RequestMethod.GET, produces = { "text/plain" })
@@ -223,7 +231,7 @@ public class SchedController implements BroadcastEventListener {
 	public String removeObject(HttpServletRequest request,
 			HttpServletResponse response) {
 		
-		return "Object Removed - " + distributedScheduledExecutor.objectStore().remove("OBJECTS", "SomeKey");
+		return "Object Removed - " + distributedObjectStore.remove("OBJECTS", "SomeKey");
 	}
 	
 	@RequestMapping(value = "/start-simple-job", method = RequestMethod.GET, produces = { "text/plain" })
@@ -318,7 +326,7 @@ public class SchedController implements BroadcastEventListener {
 	public String sendEvent(HttpServletRequest request,
 			HttpServletResponse response) {
 		
-		distributedScheduledExecutor.event(new TestEvent("I am an event!"));
+		distributedEvents.event(new TestEvent("I am an event!"));
 		
 		return "Event sent";
 	}

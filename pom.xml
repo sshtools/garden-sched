@@ -22,7 +22,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.sshtools</groupId>
     <artifactId>garden-sched</artifactId>
-    <version>0.9.3</version>
+    <version>0.9.4</version>
     <name>Garden Sched</name>
     <packaging>pom</packaging>
     <description>A distributed task scheduler based on JGroups. </description>
@@ -118,7 +118,7 @@
                 <plugin>
                     <groupId>com.mycila</groupId>
                     <artifactId>license-maven-plugin</artifactId>
-                    <version>2.3</version>
+                    <version>4.3</version>
                 </plugin>
                 <plugin>
                     <groupId>org.codehaus.mojo</groupId>
@@ -194,7 +194,7 @@
                 <plugin>
                     <groupId>com.mycila</groupId>
                     <artifactId>license-maven-plugin</artifactId>
-                    <version>2.3</version>
+                    <version>4.3</version>
                     <configuration>
                         <header>src/templates/APACHE-2.txt</header>
                         <properties>

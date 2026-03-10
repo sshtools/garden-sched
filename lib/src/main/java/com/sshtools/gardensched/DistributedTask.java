@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright © 2025 JAdaptive Limited (support@jadaptive.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -121,7 +121,7 @@ public interface DistributedTask<TASK extends Serializable> extends Streamable {
 			out.writeInt(attributes.size());
 			for(var entry : attributes.entrySet()) {
 				out.writeUTF(entry.getKey());
-				DistributedScheduledExecutor.currentSerializer().serialize(entry.getValue(), out);
+				DistributedMachine.currentSerializer().serialize(entry.getValue(), out);
 			}
 		}
 
@@ -151,7 +151,7 @@ public interface DistributedTask<TASK extends Serializable> extends Streamable {
 			for(var i = 0 ; i < c ; i++) {
 				attributes.put(
 					in.readUTF(), 
-					DistributedScheduledExecutor.currentSerializer().deserialize(Serializable.class, in)
+					DistributedMachine.currentSerializer().deserialize(Serializable.class, in)
 				);
 			}
 			this.attributes = Collections.unmodifiableMap(attributes);

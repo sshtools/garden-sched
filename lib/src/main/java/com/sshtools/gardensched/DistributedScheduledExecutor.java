@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright © 2025 JAdaptive Limited (support@jadaptive.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,11 +21,9 @@ import java.io.UncheckedIOException;
 import java.text.MessageFormat;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -34,7 +32,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Delayed;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
@@ -43,85 +40,50 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Stream;
 
 import org.jgroups.Address;
-import org.jgroups.BytesMessage;
-import org.jgroups.JChannel;
 import org.jgroups.Message;
-import org.jgroups.Receiver;
-import org.jgroups.View;
-import org.jgroups.util.Util;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.sshtools.gardensched.Request.AckPayload;
-import com.sshtools.gardensched.Request.EventPayload;
-import com.sshtools.gardensched.Request.LockPayload;
 import com.sshtools.gardensched.Request.ProgressMessagePayload;
 import com.sshtools.gardensched.Request.ProgressPayload;
 import com.sshtools.gardensched.Request.ResultPayload;
 import com.sshtools.gardensched.Request.StartProgressPayload;
-import com.sshtools.gardensched.Request.StorePayload;
 import com.sshtools.gardensched.Request.SubmitPayload;
 import com.sshtools.gardensched.Request.Type;
 
-public final class DistributedScheduledExecutor implements ScheduledExecutorService {
+public final class DistributedScheduledExecutor implements ScheduledExecutorService, DistributedComponent, MessageReceiver {
 	
 	public final static class Builder {
 		private int schedulerThreads = 1;
-		private String props = "udp.xml";
-		private String clusterName = "garden-sched";
-		private String groupName = null;
-		private Optional<LockProvider> lockProvider = Optional.empty();
-		private Optional<PayloadSerializer> payloadSerializer = Optional.empty();
-		private Optional<PayloadFilter> payloadFilter = Optional.empty();
 		private boolean alwaysDistribute = false;
 		private boolean startPaused = false;
-		private Duration acknowledgeTimeout = Duration.ofSeconds(10);
 		private Optional<TaskErrorHandler> taskErrorHandler = Optional.empty();
 		private Optional<TaskSuccessHandler> taskSuccessHandler = Optional.empty();
-		private Duration closeTimeout = Duration.of(1, ChronoUnit.DAYS);
 		private Optional<TaskStore> taskStore = Optional.empty();
-		private Optional<ObjectStore> objectStore = Optional.empty();
 		private boolean persistentByDefault = false;
 		private boolean restoreTasksAtStartup = true;
 		private boolean deferStorageUntilStarted = false;
-		private boolean checkLocalObjectStorageFirst = true;
-		private boolean storeToLocalUponRemoteRetrieval = true;
+		private final DistributedMachine machine;
+		
+		public Builder(DistributedMachine machine) {
+			this.machine = machine;
+		}
 
 		public DistributedScheduledExecutor build() throws Exception {
 			return new DistributedScheduledExecutor(this);
 		}
 		
-		public Builder withoutCheckLocalObjectStorageFirst() {
-			return withCheckLocalObjectStorageFirst(false);
+		public Builder withAlwaysDistribute() {
+			return withAlwaysDistribute(true);
 		}
 		
-		public Builder withCheckLocalObjectStorageFirst(boolean checkLocalObjectStorageFirst) {
-			this.checkLocalObjectStorageFirst = checkLocalObjectStorageFirst;
-			return this;
-		}
-
-		public Builder withAcknowledgeTimeout(Duration acknowledgeTimeout) {
-			this.acknowledgeTimeout = acknowledgeTimeout;
-			return this;
-		}
-		
-		public Builder withoutRestoreTasksAtStartup() {
-			return withRestoreTasksAtStartup(false);
-		}
-		
-		public Builder withRestoreTasksAtStartup(boolean restoreTasksAtStartup) {
-			this.restoreTasksAtStartup = restoreTasksAtStartup;
-			return this;
-		}
-		
-		public Builder withStoreToLocalUponRemoteRetrieval(boolean storeToLocalUponRemoteRetrieval) {
-			this.storeToLocalUponRemoteRetrieval = storeToLocalUponRemoteRetrieval;
+		public Builder withAlwaysDistribute(boolean alwaysDistribute) {
+			this.alwaysDistribute = alwaysDistribute;
 			return this;
 		}
 		
@@ -135,57 +97,22 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			return this;
 		}
 		
-		public Builder withAlwaysDistribute() {
-			return withAlwaysDistribute(true);
+		public Builder withoutRestoreTasksAtStartup() {
+			return withRestoreTasksAtStartup(false);
 		}
 
 		
-		public Builder withAlwaysDistribute(boolean alwaysDistribute) {
-			this.alwaysDistribute = alwaysDistribute;
-			return this;
-		}
-		
-		public Builder withCloseTimeout(Duration closeTimeout) {
-			this.closeTimeout = closeTimeout;
-			return this;
-		}
-		
-		public Builder withClusterName(String clusterName) {
-			this.clusterName = clusterName;
-			return this;
-		}
-		
-		public Builder withGroupName(String groupName) {
-			this.groupName = groupName;
-			return this;
-		}
-		
-		public Builder withJGroupsProps(LockProvider lockProvider) {
-			this.lockProvider = Optional.of(lockProvider);
-			return this;
-		}
-		
-		public Builder withJGroupsProps(String props) {
-			this.props = props;
-			return this;
-		}
-		
-		public Builder withPayloadFilter(PayloadFilter payloadFilter) {
-			this.payloadFilter = Optional.of(payloadFilter);
-			return this;
-		}
-
-		public Builder withPayloadSerializer(PayloadSerializer payloadSerializer) {
-			this.payloadSerializer = Optional.of(payloadSerializer);
-			return this;
-		}
-
 		public Builder withPersistentByDefault() {
 			return withPersistentByDefault(true);
 		}
-
+		
 		public Builder withPersistentByDefault(boolean persistentByDefault) {
 			this.persistentByDefault = persistentByDefault;
+			return this;
+		}
+
+		public Builder withRestoreTasksAtStartup(boolean restoreTasksAtStartup) {
+			this.restoreTasksAtStartup = restoreTasksAtStartup;
 			return this;
 		}
 
@@ -210,11 +137,6 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 		public Builder withTaskStore(TaskStore taskStore) {
 			this.taskStore = Optional.of(taskStore);
-			return this;
-		}
-
-		public Builder withObjectStore(ObjectStore objectStore) {
-			this.objectStore = Optional.of(objectStore);
 			return this;
 		}
 
@@ -259,13 +181,8 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					private final TaskProgress progress = createProgress(tinfo);
 
 					@Override
-					public TaskProgress progress() {
-						return progress;
-					}
-					
-					@Override
-					public ClusterID id() {
-						return id;
+					public Address address() {
+						return DistributedScheduledExecutor.this.machine.address();
 					}
 					
 					@Override
@@ -275,23 +192,18 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					}
 					
 					@Override
-					public Address address() {
-						return DistributedScheduledExecutor.this.address();
+					public ClusterID id() {
+						return id;
 					}
-
+					
 					@Override
 					public boolean isCancelled() {
 						return DistributedScheduledExecutor.this.future(id).isCancelled();
 					}
 
 					@Override
-					public void rescheduleWithFixedRate(long delay, long period, TimeUnit unit) {
-						newSpec.set(new TaskSpec(Instant.now(), Schedule.FIXED_RATE, period, delay, unit, taskSpec.trigger()));
-					}
-
-					@Override
-					public void rescheduleWithFixedDelay(long delay, long period, TimeUnit unit) {
-						newSpec.set(new TaskSpec(Instant.now(), Schedule.FIXED_DELAY, period, delay, unit, taskSpec.trigger()));
+					public TaskProgress progress() {
+						return progress;
 					}
 
 					@Override
@@ -302,6 +214,16 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					@Override
 					public void reschedule(TaskTrigger trigger) {
 						newSpec.set(new TaskSpec(Instant.now(), Schedule.TRIGGER, 0, 0, TimeUnit.MILLISECONDS, trigger));
+					}
+
+					@Override
+					public void rescheduleWithFixedDelay(long delay, long period, TimeUnit unit) {
+						newSpec.set(new TaskSpec(Instant.now(), Schedule.FIXED_DELAY, period, delay, unit, taskSpec.trigger()));
+					}
+
+					@Override
+					public void rescheduleWithFixedRate(long delay, long period, TimeUnit unit) {
+						newSpec.set(new TaskSpec(Instant.now(), Schedule.FIXED_RATE, period, delay, unit, taskSpec.trigger()));
 					}
 					
 				});
@@ -369,6 +291,18 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		
 		protected abstract TaskProgress createProgress(TaskInfo tinfo);
 		
+		protected Object doRunTask() throws Exception {
+			if(task instanceof Callable dcl)
+				return dcl.call();
+			else if(task instanceof Runnable dcr) {
+				dcr.run();
+			}
+			else {
+				throw new IllegalArgumentException("Unknown task type.");
+			}
+			return null;
+		}
+
 		protected Object doTask(TaskInfo taskInfo, TaskCompletionContext taskCompletionContext) {
 			Object result = null;
 			taskInfo.lastExecuted = Optional.of(Instant.now());
@@ -396,90 +330,11 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			}
 			return result;
 		}
-
-		protected Object doRunTask() throws Exception {
-			if(task instanceof Callable dcl)
-				return dcl.call();
-			else if(task instanceof Runnable dcr) {
-				dcr.run();
-			}
-			else {
-				throw new IllegalArgumentException("Unknown task type.");
-			}
-			return null;
-		}
 		
 		protected void noRetrigger() {
 		}
 
 		abstract void retrigger();
-	}
-
-	private final class DefaultLockProvider implements LockProvider {
-
-		private Map<String, Address> locks = new ConcurrentHashMap<>();
-		private Map<String, Semaphore> acks = new ConcurrentHashMap<>();
-		private Map<String, AtomicInteger> ackCounts = new ConcurrentHashMap<>();
-
-		@Override
-		public Lock acquireLock(String name) throws InterruptedException, IllegalStateException {
-
-			var sem = new Semaphore(clusterSize);
-			var ackCount = new AtomicInteger();
-			
-			try {
-
-				synchronized (locks) {
-					if (locks.containsKey(name))
-						throw new IllegalStateException(name + " is locked.");
-	
-					locks.put(name, ch.getAddress());
-	
-					sem.acquire(clusterSize);
-					acks.put(name, sem);
-					ackCounts.put(name, ackCount);
-					sendRequest(null, new Request(Request.Type.LOCK, new LockPayload(name, ch.getAddress())));
-				}
-	
-				/* Wait for everyone to acknowledge via LOCKED */
-				var requireAck = clusterSize;
-				if (!sem.tryAcquire(clusterSize, acknowledgeTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
-					requireAck = clusterSize - sem.availablePermits();
-					LOG.warn("{} nodes did not reply, perhaps a node went down, ignoring.", requireAck);
-				}
-				if (ackCount.get() != requireAck) {
-					throw new IllegalStateException(name + " is locked.");
-				}
-			}
-			finally {
-				acks.remove(name);
-				ackCounts.remove(name);
-			}
-
-			return new Lock() {
-				@Override
-				public void close() {
-					try {
-						LOG.debug("{} releasing lock {}", ch.getAddress(), name);
-						var sem = new Semaphore(clusterSize);
-						sem.acquire(clusterSize);
-						acks.put(name, sem);
-
-						sendRequest(null, new Request(Request.Type.UNLOCK, new LockPayload(name, ch.getAddress())));
-
-						/* Wait for everyone to acknowledge via UNLOCKED */
-						sem.tryAcquire(clusterSize, acknowledgeTimeout.toMillis(), TimeUnit.MILLISECONDS);
-					} catch (RuntimeException re) {
-						throw re;
-					} catch (InterruptedException e) {
-						throw new IllegalStateException(e);
-					} finally {
-						acks.remove(name);
-					}
-				}
-			};
-		}
-
 	}
 	
 	private final class EntryFuture<T> implements Future<T> {
@@ -538,13 +393,8 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			return new TaskProgress() {
 				
 				@Override
-				public void start(long max) {
-					tinfo.maxProgress = Optional.of(max);
-				}
-				
-				@Override
-				public void progress(long value) {
-					tinfo.progress = Optional.of(value);
+				public void message(String text) {
+					tinfo.message(text);
 				}
 				
 				@Override
@@ -553,10 +403,32 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				}
 				
 				@Override
-				public void message(String text) {
-					tinfo.message(text);
+				public void progress(long value) {
+					tinfo.progress = Optional.of(value);
+				}
+				
+				@Override
+				public void start(long max) {
+					tinfo.maxProgress = Optional.of(max);
 				}
 			};
+		}
+
+		@SuppressWarnings("unchecked")
+		@Override
+		protected Object doRunTask() throws Exception {
+			/* Bit hacky, but this is to save having to manually autowire
+			 * AFFINITY.LOCAL tasks 
+			 */
+			if(task instanceof DistributedCallable dcl)
+				return ((Callable<Object>)machine.payloadFilter().filter(dcl.task())).call();
+			else if(task instanceof DistributedRunnable dcr) {
+				((Runnable)machine.payloadFilter().filter(dcr.task())).run();
+			}
+			else {
+				throw new IllegalArgumentException("Unknown task type.");
+			}
+			return null;
 		}
 
 		@Override
@@ -572,23 +444,6 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		@Override
 		void retrigger() {
 			submitLocal(id, taskSpec, this);
-		}
-
-		@SuppressWarnings("unchecked")
-		@Override
-		protected Object doRunTask() throws Exception {
-			/* Bit hacky, but this is to save having to manually autowire
-			 * AFFINITY.LOCAL tasks 
-			 */
-			if(task instanceof DistributedCallable dcl)
-				return ((Callable<Object>)payloadFilter.filter(dcl.task())).call();
-			else if(task instanceof DistributedRunnable dcr) {
-				((Runnable)payloadFilter.filter(dcr.task())).run();
-			}
-			else {
-				throw new IllegalArgumentException("Unknown task type.");
-			}
-			return null;
 		}
 	}
 	
@@ -606,34 +461,34 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			return new TaskProgress() {
 				
 				@Override
-				public void start(long max) {
-					tinfo.maxProgress = Optional.of(max);
-					queue.submit(() -> {
-						sendRequest(null, new Request(Type.START_PROGRESS, id, new StartProgressPayload(max)));
-					});
-				}
-				
-				@Override
-				public void progress(long value) {
-					tinfo.progress = Optional.of(value);
-					queue.submit(() -> {
-						sendRequest(null, new Request(Type.PROGRESS, id, new ProgressPayload(value)));
+				public void message(String text) {
+					tinfo.message(text);
+					machine.queue().submit(() -> {
+						machine.sendRequest(null, new Request(Type.PROGRESS_MESSAGE, id, new ProgressMessagePayload(text)));
 					});
 				}
 				
 				@Override
 				public void message(String bundle, String key, String... args) {
 					tinfo.message(bundle, key, args);
-					queue.submit(() -> {
-						sendRequest(null, new Request(Type.PROGRESS_MESSAGE, id, new ProgressMessagePayload(bundle, key, args)));
+					machine.queue().submit(() -> {
+						machine.sendRequest(null, new Request(Type.PROGRESS_MESSAGE, id, new ProgressMessagePayload(bundle, key, args)));
 					});
 				}
 				
 				@Override
-				public void message(String text) {
-					tinfo.message(text);
-					queue.submit(() -> {
-						sendRequest(null, new Request(Type.PROGRESS_MESSAGE, id, new ProgressMessagePayload(text)));
+				public void progress(long value) {
+					tinfo.progress = Optional.of(value);
+					machine.queue().submit(() -> {
+						machine.sendRequest(null, new Request(Type.PROGRESS, id, new ProgressPayload(value)));
+					});
+				}
+				
+				@Override
+				public void start(long max) {
+					tinfo.maxProgress = Optional.of(max);
+					machine.queue().submit(() -> {
+						machine.sendRequest(null, new Request(Type.START_PROGRESS, id, new StartProgressPayload(max)));
 					});
 				}
 			};
@@ -645,20 +500,20 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			switch (task.affinity()) {
 			case ALL:
 			case MEMBER:
-				queue.submit(() -> {
-					sendRequest(null, new Request(Type.EXECUTING, id));
+				machine.queue().submit(() -> {
+					machine.sendRequest(null, new Request(Type.EXECUTING, id));
 				});
 				result = (Serializable) super.doTask(taskInfo, taskErrorContext);
 				break;
 			case ONLY_THIS:
-				if (entry.submitter.equals(ch.getAddress().toString())) {
+				if (entry.submitter.equals(machine.address().toString())) {
 					if(LOG.isDebugEnabled()) {
 						LOG.debug(
 								"Running task {} [{}] on this node because its affinity is {} and it was scheduled on this node.",
 								id, task.id(), task.affinity());
 					}
-					queue.submit(() -> {
-						sendRequest(null, new Request(Type.EXECUTING, id));
+					machine.queue().submit(() -> {
+						machine.sendRequest(null, new Request(Type.EXECUTING, id));
 					});
 					result = (Serializable) super.doTask(taskInfo, taskErrorContext);
 				}
@@ -667,25 +522,25 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				}
 				break;
 			case THIS:
-				if (!getMemberList().contains(entry.submitter) && leader()) {
+				if (!machine.getMemberList().contains(entry.submitter) && machine.leader()) {
 					if(LOG.isDebugEnabled()) {
 						LOG.debug(
 								"Running task {} [{}] on this node because its affinity is {} and the node it was scheduled on is not active and we are leader.",
 								id, task.id(), task.affinity());
 					}
-					queue.submit(() -> {
-						sendRequest(null, new Request(Type.EXECUTING, id));
+					machine.queue().submit(() -> {
+						machine.sendRequest(null, new Request(Type.EXECUTING, id));
 					});
 					result = (Serializable) super.doTask(taskInfo, taskErrorContext);
 				}
-				else if (entry.submitter.equals(ch.getAddress().toString())) {
+				else if (entry.submitter.equals(machine.address().toString())) {
 					if(LOG.isDebugEnabled()) {
 						LOG.debug(
 								"Running task {} [{}] on this node because its affinity is {} and it was scheduled on this node.",
 								id, task.id(), task.affinity());
 					}
-					queue.submit(() -> {
-						sendRequest(null, new Request(Type.EXECUTING, id));
+					machine.queue().submit(() -> {
+						machine.sendRequest(null, new Request(Type.EXECUTING, id));
 					});
 					result = (Serializable) super.doTask(taskInfo, taskErrorContext);
 				}
@@ -694,21 +549,21 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				}
 				break;
 			case ANY:
-				if (id.getId() % clusterSize == rank) {
+				if (id.getId() % machine.clusterSize() == machine.rank()) {
 					if(LOG.isDebugEnabled()) {
 						LOG.debug(
 								"Running task {} [{}] on this node because its affinity is {} and it's rank of {} matches.",
-								id, task.id(), task.affinity(), rank);
+								id, task.id(), task.affinity(), machine.rank());
 					}
-					queue.submit(() -> {
-						sendRequest(null, new Request(Type.EXECUTING, id));
+					machine.queue().submit(() -> {
+						machine.sendRequest(null, new Request(Type.EXECUTING, id));
 					});
 					result = (Serializable) super.doTask(taskInfo, taskErrorContext);
 				} else {
 					if(LOG.isDebugEnabled()) {
 						LOG.debug(
 								"Not running task {} [{}] on this node because its affinity is {} and it's rank of {} does not match.",
-								id, task.id(), task.affinity(), rank);
+								id, task.id(), task.affinity(), machine.rank());
 					}
 					return null;
 				}
@@ -724,8 +579,8 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			var rp = new ResultPayload(result);
 			
 			try {
-				acks.runWithAck(Request.Type.RESULT, id, clusterSize, () -> {
-					sendRequest(null, new Request(Request.Type.RESULT, id, rp));
+				machine.acks().runWithAck(Request.Type.RESULT, id, machine.clusterSize(), () -> {
+					machine.sendRequest(null, new Request(Request.Type.RESULT, id, rp));
 				});
 			} catch (Exception e) {
 				LOG.error("Failed to broadcast result for {}.", id, e);
@@ -739,186 +594,43 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 	}
 
-	private class SchedReceiver implements Receiver {
-
-		@Override
-		public void receive(Message msg) {
-			if(msg instanceof BytesMessage bmsg) {
-			
-				srlzr.set(payloadSerializer);
-				fltr.set(payloadFilter);
-				try {
-					Request req = Util.streamableFromByteBuffer(Request.class, bmsg.getBytes(),
-							msg.getOffset(), msg.getLength());
-					switch (req.type()) {
-					case KEYS:
-						handleKeys(msg.getSrc(), req);
-						break;
-					case GET_OBJECT:
-						handleGetObject(msg.getSrc(), req);
-						break;
-					case HAS_OBJECT:
-						handleHasObject(msg.getSrc(), req);
-						break;
-					case OBJECT_COUNT:
-						handleObjectCount(msg.getSrc(), req);
-						break;
-					case REMOVE_OBJECT:
-						handleRemoveObject(msg.getSrc(), req);
-						break;
-					case STORED_OBJECT:
-						handleStore(msg.getSrc(), req);
-						break;
-					case START_PROGRESS:
-						handleStartProgress(msg.getSrc(), req);
-						break;
-					case PROGRESS:
-						handleProgress(msg.getSrc(), req);
-						break;
-					case PROGRESS_MESSAGE:
-						handleProgressMessage(msg.getSrc(), req);
-						break;
-					case EVENT:
-						handleEvent(msg.getSrc(), req);
-						break;
-					case LOCK:
-						handleLock(req);
-						break;
-					case LOCKED:
-						handleLocked(req);
-						break;
-					case UNLOCK:
-						handleUnlock(req);
-						break;
-					case UNLOCKED:
-						handleUnlocked(req);
-						break;
-					case ACK:
-						AckPayload ack = req.payload(); 
-						acks.ack(ack.type(), req.id(), ack.result());
-						break;
-					case SUBMIT:{
-						SubmitPayload submission = req.payload();
-						handleSubmit(req.id(), msg.getSrc(), submission.task(), submission.spec(), submission.runNow());
-						break;
-					}
-					case EXECUTING:
-						handleExecuting(msg.getSrc(), req);
-						break;
-					case RESULT:
-						var id = req.id();
-						var entry = tasks.get(id);
-						ResultPayload res = req.payload(); 
-						if (entry == null) {
-							LOG.error("Received result for task I don't know about, {}", id);
-						} else {
-							taskInfo.get(id).active = false;
-							entryResults(id, entry, res.result());
-						}
-						sendRequest(msg.getSrc(), new Request(Request.Type.ACK, req.id(), new AckPayload(Request.Type.RESULT)));
-						break;
-					case REMOVE:
-						handleRemove(msg.getSrc(), req);
-						break;
-					default:
-						throw new IllegalArgumentException("Type " + req.type() + " is not recognized");
-					}
-				} catch (Exception e) {
-					LOG.error("Exception receiving message from {}", msg.getSrc(), e);
-				} finally {
-					srlzr.remove();
-					fltr.remove();
-				}
-			}
-			else {
-				LOG.warn("Unexpected message: {}", msg);
-			}
-		}
-
-		@Override
-		public void viewAccepted(View view) {
-			acceptView(view);
-		}
-	}
-
 	private final static Logger LOG = LoggerFactory.getLogger(DistributedScheduledExecutor.class);
 	
 	private static TaskSpec DEFAULT_TASK = new TaskSpec(Instant.EPOCH, Schedule.NOW, 0, 0, TimeUnit.MILLISECONDS, null);
 
-	private static final ThreadLocal<PayloadSerializer> srlzr = new ThreadLocal<>();
-	private static final ThreadLocal<PayloadFilter> fltr = new ThreadLocal<>();
-	
-	public static PayloadFilter currentFilter() {
-		return fltr.get();
-	}
-
-	public static PayloadSerializer currentSerializer() {
-		return srlzr.get();
-	}
-	
-	private final PayloadSerializer payloadSerializer;
-	private final JChannel ch;
 	private final ScheduledExecutorService delegate;
 	private final ConcurrentMap<ClusterID, TaskEntry> tasks = new ConcurrentHashMap<>();
-	private final LockProvider lockProvider;
 	private final ConcurrentMap<ClusterID, TaskInfo> taskInfo = new ConcurrentHashMap<>();
 	private final ConcurrentMap<ClusterID, Future<?>> localFutures = new ConcurrentHashMap<>();
-	private final ExecutorService queue;
 	private final boolean alwaysDistribute;
-	private final Duration acknowledgeTimeout;
 	private final Optional<TaskErrorHandler> taskErrorHandler;
 	private final Optional<TaskSuccessHandler> taskSuccessHandler;
 	private final Optional<TaskStore> taskStore;
-	private final Optional<ObjectStore> objectStore;
-	private final List<NodeListener> listeners = new ArrayList<>();
-	private final List<BroadcastEventListener> broadcastListeners = new ArrayList<>();
-	private final Duration closeTimeout;
 	private final boolean persistentByDefault;
 	private final boolean deferStorageUntilStarted;
 	private final List<TaskEntry> deferredStorage = new ArrayList<>();
 	private final AtomicBoolean started = new AtomicBoolean();
-	private final Ack acks;
-	private final boolean checkLocalObjectStorageFirst;
-	private final boolean storeToLocalUponRemoteRetrieval;
+	private final DistributedMachine machine;
 	
-	private View view;
-	private int rank = -1;
-	private int clusterSize = -1;
 	private int threads;
-	private final PayloadFilter payloadFilter;
 	private boolean startPaused;
-	private Semaphore sem;
 	private boolean restoreTasksAtStartup;
-	private final Optional<DistributedObjectStore> distributedObjectStore;
+	private Semaphore sem;
+
 	
 	private DistributedScheduledExecutor(Builder bldr) throws Exception {
-		objectStore = bldr.objectStore;
-		checkLocalObjectStorageFirst = bldr.checkLocalObjectStorageFirst;
-		payloadSerializer = bldr.payloadSerializer.orElseGet(PayloadSerializer::defaultSerializer);
-		lockProvider = bldr.lockProvider.orElseGet(() -> new DefaultLockProvider());
+		machine = bldr.machine;
 		threads = bldr.schedulerThreads;
 		delegate = Executors.newScheduledThreadPool(threads);
 		startPaused = bldr.startPaused;
-		acknowledgeTimeout = bldr.acknowledgeTimeout;
 		taskErrorHandler = bldr.taskErrorHandler;
 		taskSuccessHandler = bldr.taskSuccessHandler;
-		closeTimeout = bldr.closeTimeout;
 		taskStore = bldr.taskStore;
 		persistentByDefault = bldr.persistentByDefault;
-		queue = Executors.newSingleThreadExecutor();
-		payloadFilter = bldr.payloadFilter.orElseGet(() -> PayloadFilter.nullFilter());
 		alwaysDistribute = bldr.alwaysDistribute;
-		storeToLocalUponRemoteRetrieval = bldr.storeToLocalUponRemoteRetrieval ;
 		restoreTasksAtStartup = bldr.restoreTasksAtStartup;
 		taskStore.ifPresent(ts -> ts.initialise(this));
 		deferStorageUntilStarted = bldr.deferStorageUntilStarted;
-		acks = new Ack(acknowledgeTimeout);
-		distributedObjectStore = objectStore.map(os -> new DistributedObjectStore(acks, os, this, checkLocalObjectStorageFirst, storeToLocalUponRemoteRetrieval));
-		
-		ch = new JChannel(bldr.props);
-		ch.name(bldr.groupName);
-		ch.setReceiver(new SchedReceiver());
-		ch.connect(bldr.clusterName);
 		
 		if(startPaused) {
 			LOG.info("Starting paused (all {} threads locked).", threads);
@@ -952,37 +664,9 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 	}
 
-	public void restore(TaskEntry entry) {
-		if (!tasks.containsKey(entry.id) && shouldRun(entry)) {
-			execute(entry, false);
-		}
-	}
-	
-	public void addBroadcastListener(BroadcastEventListener listener) {
-		this.broadcastListeners.add(listener);
-	}
-	
-	public void addListener(NodeListener listener) {
-		this.listeners.add(listener);
-	}
-	
-	public Address address() {
-		return ch.getAddress();
-	}
-	
 	@Override
 	public boolean awaitTermination(long timeout, TimeUnit timeUnit) throws InterruptedException {
 		return delegate.awaitTermination(timeout, timeUnit);
-	}
-	
-	/**
-	 * Get the distributed object store, if configured. 
-	 * 
-	 * @return object store
-	 * @throws IllegalStateException if no object store has been configured
-	 */
-	public ObjectStore objectStore() {
-		return distributedObjectStore.orElseThrow(() -> new IllegalStateException("No object store has been configured.") );
 	}
 	
 	/**
@@ -990,49 +674,17 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	 */
 //	@Override
 	public void close() {
-		LOG.info("Closing distributed executor.");
-        boolean terminated = isTerminated();
-        if (!terminated) {
-
-    		/* Cancel tasks on shutdown so only actually running tasks will remain subject
-    		 * to the timeout */ 
-    		LOG.info("Cancelling locally scheduled tasks.");
-    		taskInfo.entrySet().forEach(tsk -> {
-    			LOG.info("Cancelling {}", tsk.getKey());
-    			tsk.getValue().underlyingFuture.cancel(false); 
-    		});
-    		
-    		if(!started.get()) {
-   				sem.release(threads);
-    		}
-    		
-            shutdown();
-            boolean interrupted = false;
-            try {
-        		LOG.info("Awaiting termination ....");
-                terminated = awaitTermination(closeTimeout.toMillis(), TimeUnit.MILLISECONDS);
-            } catch (InterruptedException e) {
-                if (!interrupted) {
-            		LOG.info("Forcibly terminating");
-                    shutdownNow();
-                    interrupted = true;
-                }
-            }
-            if (interrupted) {
-                Thread.currentThread().interrupt();
-            }
-        }
-	}
-	
-	public void event(Serializable event) {
-		queue.execute(() -> {
-			sendRequest(null, new Request(Request.Type.EVENT, ClusterID.createNext(ch.getAddress()), new  EventPayload(event)));
-		});
+		shutdown();
 	}
 	
 	@Override
 	public void execute(Runnable runnable) {
 		submit(runnable);
+	}
+	
+	@Override
+	public void forceClose() {
+		shutdownNow();
 	}
 	
 	@SuppressWarnings("unchecked")
@@ -1048,6 +700,60 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	@SuppressWarnings("unchecked")
 	public <R> List<IdentifiableFuture<R>> futures() {
 		return taskInfo.values().stream().map(ti ->  (IdentifiableFuture<R>)ti.userFuture).filter(f -> f != null).toList();
+	}
+
+	@Override
+	public void handleLeftMember(Address mbr) {
+		/*
+		 * Take over the tasks previously assigned to this member *if* the ID matches my
+		 * (new rank)
+		 */
+		
+//		LOG.info("Handling left member {}. I know about {} tasks", mbr, tasks.size());
+//		for (Map.Entry<ClusterID, Entry<?>> entry : tasks.entrySet()) {
+//			ClusterID id = entry.getKey();
+//			if (!shouldRun(id, entry.getValue().submitter, entry.getValue().task, entry.getValue().spec)) {
+//				continue;
+//			}
+//
+//			var val = entry.getValue();
+//			if (mbr.equals(val.submitter)) {
+//				LOG.info("Will not take over tasks submitted by {} because it left the cluster", mbr);
+//				continue;
+//			}
+//			LOG.info("Taking over task {} from {} (submitted by {})", id, mbr, val.submitter);
+//			execute(id, val.submitter, val.task, val.spec);
+//
+//			// XXXXXXXXXXXXXXXXXXXXXXXXXX
+//			// TODO
+//			// XXXXXXXXXXXXXXXXXXXXXXXXXXX
+//			// Pretty sure something similar to handleExecute is needed here
+//
+//		}
+	}
+
+	@Override
+	public void handleNewMember(int wasRank, Address mbr) {
+		/* We only we the new member to be sent tasks once, so only send if ..
+		 * if we WERE the leader before this new member
+		 * 
+		 *  None of this happens if there is shared task storage
+		 */
+		if(!taskStore.isPresent() && wasRank == 0) {
+			LOG.info("I was leader, handling new member {}. I know about {} tasks", mbr, tasks.size());
+			for (Map.Entry<ClusterID, TaskEntry> entry : tasks.entrySet()) {
+				var value = entry.getValue();
+				var task = (DistributedTask<?>) value.task;
+				LOG.info("   Sending {} [{}]", value.id(), entry.getKey());
+				var req = new Request(Request.Type.SUBMIT, value.id(), new SubmitPayload(task, value.spec));
+				try {
+					sendSubmitRequest(mbr, req);
+				} catch (Exception ioe) {
+					LOG.warn("Couldn't update new member with task {}", task.id());
+				}
+			}
+		}
+		
 	}
 
 	@Override
@@ -1071,7 +777,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			throws InterruptedException, ExecutionException, TimeoutException {
 		throw new UnsupportedOperationException();
 	}
-
+	
 	@Override
 	public boolean isShutdown() {
 		return delegate.isShutdown();
@@ -1081,25 +787,68 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 	public boolean isTerminated() {
 		return delegate.isTerminated();
 	}
-	
-	public LockProvider lockProvider() {
-		return lockProvider;
-	}
-	
-	public boolean leader() {
-		return rank == 0;
-	}
-	
-	public int rank() {
-		return rank;
+
+	@Override
+	public void prepareClose() {
+        if (!isTerminated()) {
+
+    		/* Cancel tasks on shutdown so only actually running tasks will remain subject
+    		 * to the timeout */ 
+    		LOG.info("Cancelling locally scheduled tasks.");
+    		taskInfo.entrySet().forEach(tsk -> {
+    			LOG.info("Cancelling {}", tsk.getKey());
+    			tsk.getValue().underlyingFuture.cancel(false); 
+    		});
+    		taskInfo.clear();
+    		
+    		releaseStartBlock();
+        }
 	}
 
-	public void removeBroadcastListener(BroadcastEventListener listener) {
-		this.broadcastListeners.remove(listener);
+	@Override
+	public void receive(Message msg, Request req) {
+		switch(req.type()) {
+		case START_PROGRESS:
+			handleStartProgress(msg.getSrc(), req);
+			break;
+		case PROGRESS:
+			handleProgress(msg.getSrc(), req);
+			break;
+		case PROGRESS_MESSAGE:
+			handleProgressMessage(msg.getSrc(), req);
+			break;
+		case SUBMIT:{
+			SubmitPayload submission = req.payload();
+			handleSubmit(req.id(), msg.getSrc(), submission.task(), submission.spec(), submission.runNow());
+			break;
+		}
+		case EXECUTING:
+			handleExecuting(msg.getSrc(), req);
+			break;
+		case RESULT:
+			var id = req.id();
+			var entry = tasks.get(id);
+			ResultPayload res = req.payload(); 
+			if (entry == null) {
+				LOG.error("Received result for task I don't know about, {}", id);
+			} else {
+				taskInfo.get(id).active = false;
+				entryResults(id, entry, res.result());
+			}
+			machine.sendRequest(msg.getSrc(), new Request(Request.Type.ACK, req.id(), new AckPayload(Request.Type.RESULT)));
+			break;
+		case REMOVE:
+			handleRemove(msg.getSrc(), req);
+			break;
+		default:
+			throw new UnsupportedOperationException("Unsupported request type: " + req.type());
+		}
 	}
-	
-	public void removeListener(NodeListener listener) {
-		this.listeners.remove(listener);
+
+	public void restore(TaskEntry entry) {
+		if (!tasks.containsKey(entry.id) && shouldRun(entry)) {
+			execute(entry, false);
+		}
 	}
 
 	@SuppressWarnings("unchecked")
@@ -1112,7 +861,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			
 			var id = dtask.id().
 					map(i -> ClusterID.createNext(i)).
-					orElseGet(() -> ClusterID.createNext(ch.getAddress()));
+					orElseGet(() -> ClusterID.createNext(machine.address()));
 
 			var taskEntry = checkTaskId(id);
 			
@@ -1138,11 +887,11 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					LOG.debug("Not a {}, scheduling locally only.", DistributedCallable.class.getName());
 				}
 				
-				var id = ClusterID.createNext(address());
+				var id = ClusterID.createNext(machine.address());
 				
 				var sfut = delegate.schedule(() -> {
 					try {
-						return payloadFilter.filter(callable).call();
+						return machine.payloadFilter().filter(callable).call();
 					}
 					finally {
 						localFutures.remove(id);
@@ -1175,12 +924,12 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 
 	}
-
+	
 	@Override
 	public ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit) {
 		return doRunnable(Schedule.ONE_SHOT, command, delay, delay, unit, null);
 	}
-
+	
 	public ScheduledFuture<?> schedule(Runnable command, TaskTrigger trigger) {
 		return doRunnable(Schedule.TRIGGER, command, 0, 0, TimeUnit.MILLISECONDS, trigger);
 	}
@@ -1197,28 +946,33 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 	@Override
 	public void shutdown() {
+		LOG.info("Shutting down distributed executor.");
+        if (!isTerminated()) {
+        	prepareClose();
+        }
+
 		try {
-			LOG.info("Closing channel.");
-			ch.close();
+			delegate.shutdown();
 		}
 		finally {
-			LOG.info("Shutting down executor.");
-			delegate.shutdown();
-			LOG.info("Shutting down internal operations queue.");
-			queue.shutdown();
+			releaseStartBlock();
 		}
 	}
-	
+
 	@Override
 	public List<Runnable> shutdownNow() {
 		LOG.info("Requested shutdown now.");
+        if (!isTerminated()) {
+        	prepareClose();
+        }
 		try {
-			return Stream.concat(delegate.shutdownNow().stream(), queue.shutdownNow().stream()).toList();
-		} finally {
-			ch.close();
+			return delegate.shutdownNow();
+		}
+		finally {
+			releaseStartBlock();
 		}
 	}
-	
+
 	public void start() {
 		if(startPaused) {
 			startPaused = false;
@@ -1257,7 +1011,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			var dtask = (DistributedCallable<Serializable>) task;
 
 			var id = dtask.id().map(i -> ClusterID.createNext(i))
-					.orElseGet(() -> ClusterID.createNext(ch.getAddress()));
+					.orElseGet(() -> ClusterID.createNext(machine.address()));
 
 			TaskEntry dfut = checkTaskId(id);
 			if (dfut != null) {
@@ -1282,11 +1036,11 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				if (LOG.isDebugEnabled()) {
 					LOG.debug("Not a {}, submitting locally only.", DistributedCallable.class.getName());
 				}
-				var id = ClusterID.createNext(address());
+				var id = ClusterID.createNext(machine.address());
 				
 				var sfut = delegate.submit(() -> {
 					try {
-						return payloadFilter.filter(task).call();
+						return machine.payloadFilter().filter(task).call();
 					}
 					finally {
 						localFutures.remove(id);
@@ -1332,58 +1086,18 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			/* TODO */
 			throw new UnsupportedOperationException();
 	}
-	
-	public int clusterSize() {
-		return clusterSize;
-	}
 
-	public View view() {
-		return ch.getView();
-	}
-
-	private void acceptView(View view) {
-		
-		queue.execute(() -> {
-		
-			List<Address> leftMembers = DistributedScheduledExecutor.this.view != null && view != null
-					? Util.leftMembers(this.view.getMembers(), view.getMembers())
-					: Collections.emptyList();
-	
-			List<Address> newMembers = DistributedScheduledExecutor.this.view != null && view != null
-					? Util.newMembers(this.view.getMembers(), view.getMembers())
-					: Collections.emptyList();
-	
-			this.view = view;
-			
-			LOG.info("View: " + view);
-			clusterSize = view.size();
-			
-			var mbrs = view.getMembers();
-			var oldRank = rank;
-			for (var i = 0; i < mbrs.size(); i++) {
-				var tmp = mbrs.get(i);
-				if (tmp.equals(ch.getAddress())) {
-					rank = i;
-					break;
-				}
-			}
-			
-			if (oldRank == -1 || oldRank != rank) {
-				LOG.info("My rank is {}", rank);
-			}
-	
-			for (Address mbr : leftMembers) {
-				handleLeftMember(mbr);
-			}
-			
-			for (Address mbr : newMembers) {
-				handleNewMember(oldRank, mbr);
-			}
-			
-			for(var i = listeners.size() - 1 ; i >= 0 ; i--) {
-				listeners.get(i).nodesChanged(leftMembers, newMembers);
-			}
-		});
+	@Override
+	public List<Type> types() {
+		return List.of(
+			Request.Type.SUBMIT, 
+			Request.Type.RESULT, 
+			Request.Type.REMOVE, 
+			Request.Type.START_PROGRESS, 
+			Request.Type.PROGRESS_MESSAGE, 
+			Request.Type.EXECUTING, 
+			Request.Type.PROGRESS
+		);
 	}
 
 	private boolean checkTask(Callable<?> task) {
@@ -1430,13 +1144,14 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		};
 	}
 
+
 	@SuppressWarnings("unchecked")
 	private <V> ScheduledFuture<V> doRunnable(Schedule schedule, Runnable command, long initialDelay, long period, TimeUnit unit, TaskTrigger taskTrigger) {
 		if (checkTask(command)) {
 
 			var dtask = (DistributedRunnable) command;
 			var id = dtask.id().map(i -> ClusterID.createNext(i))
-					.orElseGet(() -> ClusterID.createNext(ch.getAddress()));
+					.orElseGet(() -> ClusterID.createNext(machine.address()));
 
 			TaskEntry dfut = checkTaskId(id);
 			if (dfut != null) {
@@ -1469,13 +1184,13 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				}
 				
 				ScheduledFuture<V> sfut;
-				var id = ClusterID.createNext(ch.getAddress());
+				var id = ClusterID.createNext(machine.address());
 				
 				switch(schedule) {
 				case ONE_SHOT:
 					sfut = (ScheduledFuture<V>) delegate.schedule(() -> {
 						try {
-							payloadFilter.filter(command).run();
+							machine.payloadFilter().filter(command).run();
 						}
 						finally {
 							localFutures.remove(id);
@@ -1483,10 +1198,10 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					}, initialDelay, unit);
 					break;
 				case FIXED_DELAY:
-					sfut = (ScheduledFuture<V>) delegate.scheduleWithFixedDelay(payloadFilter.filter(command), initialDelay, period, unit);
+					sfut = (ScheduledFuture<V>) delegate.scheduleWithFixedDelay(machine.payloadFilter().filter(command), initialDelay, period, unit);
 					break;
 				case FIXED_RATE:
-					sfut = (ScheduledFuture<V>) delegate.scheduleAtFixedRate(payloadFilter.filter(command), initialDelay, period, unit);
+					sfut = (ScheduledFuture<V>) delegate.scheduleAtFixedRate(machine.payloadFilter().filter(command), initialDelay, period, unit);
 					break;
 				default:
 					throw new IllegalStateException();
@@ -1539,7 +1254,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					LOG.debug("Is a {}, submitting {} [{}] to cluster with classifiers `{}`.", DistributedCallable.class.getName(), id, spec, String.join(", ", task.classifiers()));
 				}
 				
-				var entry = new TaskEntry(id, task, ch.getAddress().toString(), spec);
+				var entry = new TaskEntry(id, task, machine.address().toString(), spec);
 				tasks.put(id, entry);
 				
 				if(task.persistent().orElse(persistentByDefault)) {
@@ -1606,7 +1321,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				if (LOG.isDebugEnabled()) {
 					LOG.debug("Removing task {} as {} does not REPEAT and it has completed.", id, entry.spec().schedule());
 				}
-				queue.execute(() -> removeRequest(id));
+				machine.queue().execute(() -> removeRequest(id));
 			}
 		} else {
 			if (LOG.isDebugEnabled()) {
@@ -1702,8 +1417,8 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				) {
 				
 				@Override
-				public TaskInfo info() {
-					return tinfo;
+				public int compareTo(Delayed o) {
+					return ffuture.compareTo(o);
 				}
 
 				@Override
@@ -1718,8 +1433,8 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				}
 
 				@Override
-				public int compareTo(Delayed o) {
-					return ffuture.compareTo(o);
+				public TaskInfo info() {
+					return tinfo;
 				}
 
 				@Override
@@ -1749,12 +1464,92 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		}
 	}
 
-	private void handleEvent(Address sender, Request req) {
-		for(var i = broadcastListeners.size() - 1 ; i >= 0 ; i--) {
-			broadcastListeners.get(i).accept(sender, ((EventPayload)req.payload()).event());
+	private int expectedResults(Affinity affinity) {
+		switch(affinity) {
+		case ALL:
+			return machine.clusterSize();
+		default:
+			return 1;
 		}
 	}
 
+	private void handleExecuting(Address sender, Request req) {
+		if(sender.equals(machine.address()))
+			return;
+		
+		if(LOG.isDebugEnabled()) {
+			LOG.debug("Received EXECUTING for {}", req.id());
+		}
+		
+		var tinfo = taskInfo.get(req.id());
+		if(tinfo != null) {
+			tinfo.lastExecuted = Optional.of(Instant.now());
+			tinfo.active = true;
+		}
+	}
+
+	private void handleProgress(Address sender, Request req) {
+		if(sender.equals(machine.address()))
+			return;
+		
+		if(LOG.isDebugEnabled()) {
+			LOG.debug("Received PROGRESS for {}", req.id());
+		}
+		
+		ProgressPayload sp = req.payload(); 
+		var tinfo = taskInfo.get(req.id());
+		if(tinfo != null) {
+			tinfo.progress = Optional.of(sp.progress());
+		}
+	}
+
+	private void handleProgressMessage(Address sender, Request req) {
+		if(sender.equals(machine.address()))
+			return;
+		
+		if(LOG.isDebugEnabled()) {
+			LOG.debug("Received PROGRESS_MESSAGE for {}", req.id());
+		}
+		ProgressMessagePayload sp = req.payload(); 
+		var tinfo = taskInfo.get(req.id());
+		if(tinfo != null) {
+			if(sp.message() == null)
+				tinfo.message(sp.bundle(), sp.key(), sp.args());
+			else
+				tinfo.message(sp.message());
+		}
+	}
+
+	private void handleRemove(Address sender, Request req) {
+		if(LOG.isDebugEnabled()) {
+			LOG.debug("Received REMOVE for {} from {}", req.id(), sender);
+		}
+		tasks.remove(req.id());
+		var tinfo = taskInfo.remove(req.id());
+		if(tinfo != null && tinfo.underlyingFuture != null) {
+			tinfo.underlyingFuture.cancel(false);
+		}
+		
+		if(LOG.isDebugEnabled()) {
+			LOG.debug("Sending REMOVED to {}", sender);
+		}
+		machine.sendRequest(sender, new Request(Request.Type.ACK, req.id(), new AckPayload(Request.Type.REMOVE)));
+	}
+	
+	private void handleStartProgress(Address sender, Request req) {
+		if(sender.equals(machine.address()))
+			return;
+			
+		if(LOG.isDebugEnabled()) {
+			LOG.debug("Received START_PROGRESS for {}", req.id());
+		}
+		StartProgressPayload sp = req.payload(); 
+		var tinfo = taskInfo.get(req.id());
+		if(tinfo != null) {
+			tinfo.maxProgress = sp.max() == TaskProgress.INDETERMINATED ? Optional.empty() : Optional.of(sp.max());
+		}
+	}
+	
 	private void handleSubmit(ClusterID id, Address sender, DistributedTask<?> task, TaskSpec spec, boolean runNow) {
 		var entry = new TaskEntry(id, task, sender.toString(), spec);
 		synchronized(tasks) {
@@ -1775,312 +1570,17 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		if(LOG.isDebugEnabled()) {
 			LOG.debug("Sending SUBMIT ACK for {}", id);
 		}
-		sendRequest(sender, new Request(Request.Type.ACK, id, new AckPayload(Request.Type.SUBMIT)));
+		machine.sendRequest(sender, new Request(Request.Type.ACK, id, new AckPayload(Request.Type.SUBMIT)));
 	}
 
-	private void handleLeftMember(Address mbr) {
-		/*
-		 * Take over the tasks previously assigned to this member *if* the ID matches my
-		 * (new rank)
-		 */
-		
-//		LOG.info("Handling left member {}. I know about {} tasks", mbr, tasks.size());
-//		for (Map.Entry<ClusterID, Entry<?>> entry : tasks.entrySet()) {
-//			ClusterID id = entry.getKey();
-//			if (!shouldRun(id, entry.getValue().submitter, entry.getValue().task, entry.getValue().spec)) {
-//				continue;
-//			}
-//
-//			var val = entry.getValue();
-//			if (mbr.equals(val.submitter)) {
-//				LOG.info("Will not take over tasks submitted by {} because it left the cluster", mbr);
-//				continue;
-//			}
-//			LOG.info("Taking over task {} from {} (submitted by {})", id, mbr, val.submitter);
-//			execute(id, val.submitter, val.task, val.spec);
-//
-//			// XXXXXXXXXXXXXXXXXXXXXXXXXX
-//			// TODO
-//			// XXXXXXXXXXXXXXXXXXXXXXXXXXX
-//			// Pretty sure something similar to handleExecute is needed here
-//
-//		}
-	}
-
-
-	private void handleLock(Request req) {
-		LockPayload lock = req.payload();
-		if (lockProvider instanceof DefaultLockProvider dlp) {
-			if(LOG.isDebugEnabled()) {
-				LOG.debug("Adding lock {} as {}", lock.lockName(), lock.locker());
+	private void releaseStartBlock() {
+		if(!started.get()) {
+			try {
+				sem.release(threads);
 			}
-			synchronized (dlp.locks) {
-				var locker = lock.locker();
-				if (dlp.locks.containsKey(lock.lockName())) {
-					if(LOG.isDebugEnabled()) {
-						LOG.debug("I ({}) already have lock {}", ch.getAddress(), lock.lockName());
-					}
-					locker = ch.getAddress();
-				} else {
-					dlp.locks.put(lock.lockName(), lock.locker());
-				}
-				sendRequest(lock.locker(), new Request(Request.Type.LOCKED, new LockPayload(
-						lock.lockName(), locker)));
+			finally {
+				started.set(true);
 			}
-		} else {
-			LOG.warn(
-					"Received LOCK command, but this scheduler is not using {}. This suggests different configuration between nodes and is unsupported.",
-					DefaultLockProvider.class.getName());
-		}
-	}
-
-	private void handleLocked(Request req) {
-		LockPayload lock = req.payload();
-		if (lockProvider instanceof DefaultLockProvider dlp) {
-			if(LOG.isDebugEnabled()) {
-				LOG.debug("Received LOCKED ack for {} as {}", lock.lockName(), lock.locker());
-			}
-			if (lock.locker().equals(ch.getAddress())) {
-				if(LOG.isDebugEnabled()) {
-					LOG.debug("It was agreed I can lock {}", lock.lockName());
-				}
-				dlp.ackCounts.get(lock.lockName()).addAndGet(1);
-			} else {
-				if(LOG.isDebugEnabled()) {
-					LOG.debug("{} claimed they own the lock {}", lock.locker(), lock.lockName());
-				}
-			}
-			dlp.acks.get(lock.lockName()).release();
-		} else {
-			LOG.warn(
-					"Received LOCKED command, but this scheduler is not using {}. This suggests different configuration between nodes and is unsupported.",
-					DefaultLockProvider.class.getName());
-		}
-	}
-
-	private void handleNewMember(int wasRank, Address mbr) {
-		/* We only we the new member to be sent tasks once, so only send if ..
-		 * if we WERE the leader before this new member
-		 * 
-		 *  None of this happens if there is shared task storage
-		 */
-		if(!taskStore.isPresent() && wasRank == 0) {
-			LOG.info("I was leader, handling new member {}. I know about {} tasks", mbr, tasks.size());
-			for (Map.Entry<ClusterID, TaskEntry> entry : tasks.entrySet()) {
-				var value = entry.getValue();
-				var task = (DistributedTask<?>) value.task;
-				LOG.info("   Sending {} [{}]", value.id(), entry.getKey());
-				var req = new Request(Request.Type.SUBMIT, value.id(), new SubmitPayload(task, value.spec));
-				try {
-					sendSubmitRequest(mbr, req);
-				} catch (Exception ioe) {
-					LOG.warn("Couldn't update new member with task {}", task.id());
-				}
-			}
-		}
-		
-	}
-
-	private void handleHasObject(Address sender, Request req) {
-		StorePayload store = req.payload();
-		if(LOG.isDebugEnabled()) {
-			LOG.debug("Received HAS_OBJECT from {} for {} / {}", sender, store.path(), store.key());
-		}
-		objectStore.ifPresentOrElse(os -> {
-			sendRequest(sender, new Request(Request.Type.ACK, req.id(), new AckPayload(Request.Type.HAS_OBJECT, os.has(store.path(), store.key()))));
-		}, () -> {
-			throw new IllegalStateException("No object store configured.");
-		});
-	}
-
-	private void handleObjectCount(Address sender, Request req) {
-		StorePayload store = req.payload();
-		if(LOG.isDebugEnabled()) {
-			LOG.debug("Received OBJECT_COUNT from {} for {}", sender, store.path());
-		}
-		objectStore.ifPresentOrElse(os -> {
-			sendRequest(sender, new Request(Request.Type.ACK, req.id(), new AckPayload(Request.Type.OBJECT_COUNT, os.size(store.path()))));
-		}, () -> {
-			throw new IllegalStateException("No object store configured.");
-		});
-	}
-
-	private void handleGetObject(Address sender, Request req) {
-		StorePayload store = req.payload();
-		if(LOG.isDebugEnabled()) {
-			LOG.debug("Received GET_OBJECT from {} for {}", sender, req.id());
-		}
-		objectStore.ifPresentOrElse(os -> {
-			sendRequest(sender, new Request(
-					Request.Type.ACK, 
-					req.id(), 
-					new AckPayload(Request.Type.GET_OBJECT, os.get(store.path(), store.key()))
-				)
-			);
-		}, () -> {
-			throw new IllegalStateException("No object store configured.");
-		});
-	}
-
-	private void handleKeys(Address sender, Request req) {
-		StorePayload store = req.payload();
-		if(LOG.isDebugEnabled()) {
-			LOG.debug("Received KEYS from {} for {}", sender, req.id());
-		}
-		objectStore.ifPresentOrElse(os -> {
-			sendRequest(sender, new Request(
-					Request.Type.ACK, 
-					req.id(), 
-					new AckPayload(Request.Type.KEYS, (Serializable)new LinkedHashSet<>(os.keySet(store.path())))
-				)
-			);
-		}, () -> {
-			throw new IllegalStateException("No object store configured.");
-		});
-	}
-
-	private void handleRemoveObject(Address sender, Request req) {
-		StorePayload store = req.payload();
-		if(LOG.isDebugEnabled()) {
-			LOG.debug("Received REMOVE_OBJECT from {} for {}", sender, req.id());
-		}
-		objectStore.ifPresentOrElse(os -> {
-			var removed = os.remove(store.path(), store.key()); 
-			if(removed) {
-				if(LOG.isDebugEnabled()) {
-					LOG.debug("Removed object {} from store at path {}", store.key(), store.path());
-				}		
-			}
-			sendRequest(sender, new Request(Request.Type.ACK, req.id(), new AckPayload(Request.Type.REMOVE_OBJECT, removed)));
-		}, () -> {
-			throw new IllegalStateException("No object store configured.");
-		});
-	}
-
-	private void handleStore(Address sender, Request req) {
-		if(sender.equals(address()))
-			return;
-			
-		StorePayload store = req.payload();
-		if(LOG.isDebugEnabled()) {
-			LOG.debug("Received STORED_OBJECT from {} for {}", sender, req.id());
-		}
-		objectStore.ifPresentOrElse(os -> {
-			if(os.remove(store.path(), store.key())) {
-				if(LOG.isDebugEnabled()) {
-					LOG.debug("Removed object {} from store at path {}", store.key(), store.path());
-				}		
-			}
-		}, () -> {
-			throw new IllegalStateException("No object store configured.");
-		});
-	}
-
-	private void handleStartProgress(Address sender, Request req) {
-		if(sender.equals(address()))
-			return;
-			
-		if(LOG.isDebugEnabled()) {
-			LOG.debug("Received START_PROGRESS for {}", req.id());
-		}
-		StartProgressPayload sp = req.payload(); 
-		var tinfo = taskInfo.get(req.id());
-		if(tinfo != null) {
-			tinfo.maxProgress = sp.max() == TaskProgress.INDETERMINATED ? Optional.empty() : Optional.of(sp.max());
-		}
-	}
-
-	private void handleProgressMessage(Address sender, Request req) {
-		if(sender.equals(address()))
-			return;
-		
-		if(LOG.isDebugEnabled()) {
-			LOG.debug("Received PROGRESS_MESSAGE for {}", req.id());
-		}
-		ProgressMessagePayload sp = req.payload(); 
-		var tinfo = taskInfo.get(req.id());
-		if(tinfo != null) {
-			if(sp.message() == null)
-				tinfo.message(sp.bundle(), sp.key(), sp.args());
-			else
-				tinfo.message(sp.message());
-		}
-	}
-
-	private void handleExecuting(Address sender, Request req) {
-		if(sender.equals(address()))
-			return;
-		
-		if(LOG.isDebugEnabled()) {
-			LOG.debug("Received EXECUTING for {}", req.id());
-		}
-		
-		var tinfo = taskInfo.get(req.id());
-		if(tinfo != null) {
-			tinfo.lastExecuted = Optional.of(Instant.now());
-			tinfo.active = true;
-		}
-	}
-
-	private void handleProgress(Address sender, Request req) {
-		if(sender.equals(address()))
-			return;
-		
-		if(LOG.isDebugEnabled()) {
-			LOG.debug("Received PROGRESS for {}", req.id());
-		}
-		
-		ProgressPayload sp = req.payload(); 
-		var tinfo = taskInfo.get(req.id());
-		if(tinfo != null) {
-			tinfo.progress = Optional.of(sp.progress());
-		}
-	}
-
-	private void handleRemove(Address sender, Request req) {
-		if(LOG.isDebugEnabled()) {
-			LOG.debug("Received REMOVE for {} from {}", req.id(), sender);
-		}
-		tasks.remove(req.id());
-		var tinfo = taskInfo.remove(req.id());
-		if(tinfo != null && tinfo.underlyingFuture != null) {
-			tinfo.underlyingFuture.cancel(false);
-		}
-		
-		if(LOG.isDebugEnabled()) {
-			LOG.debug("Sending REMOVED to {}", sender);
-		}
-		sendRequest(sender, new Request(Request.Type.ACK, req.id(), new AckPayload(Request.Type.REMOVE)));
-	}
-
-	private void handleUnlock(Request req) {
-		LockPayload lock = req.payload();
-				
-		if (lockProvider instanceof DefaultLockProvider dlp) {
-			if(LOG.isDebugEnabled()) {
-				LOG.debug("Removing lock {}", lock.lockName());
-			}
-			dlp.locks.remove(lock.lockName());
-			sendRequest(lock.locker(), new Request(Request.Type.UNLOCKED, new LockPayload(
-					lock.lockName(), lock.locker())));
-		} else {
-			LOG.warn(
-					"Received UNLOCK command, but this scheduler is not using {}. This suggests different configuration between nodes and is unsupported.",
-					DefaultLockProvider.class.getName());
-		}
-	}
-
-	private void handleUnlocked(Request req) {
-		LockPayload lock = req.payload();
-		if (lockProvider instanceof DefaultLockProvider dlp) {
-			if(LOG.isDebugEnabled()) {
-				LOG.debug("Received UNLOCK ack for {} as {}", lock.lockName(), lock.locker());
-			}
-			dlp.acks.get(lock.lockName()).release();
-		} else {
-			LOG.warn(
-					"Received UNLOCK command, but this scheduler is not using {}. This suggests different configuration between nodes and is unsupported.",
-					DefaultLockProvider.class.getName());
 		}
 	}
 
@@ -2090,12 +1590,12 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			throw new IllegalArgumentException("No task with ID " + id);
 		}
 		if(LOG.isDebugEnabled()) {
-			LOG.debug("Sending remove request {} ({} in cluster right now)", id, clusterSize);
+			LOG.debug("Sending remove request {} ({} in cluster right now)", id, machine.clusterSize());
 		}
 		
 		try {
-			acks.runWithAck(Request.Type.REMOVE, id, clusterSize, () -> {
-				sendRequest(null, new Request(Request.Type.REMOVE, id));
+			machine.acks().runWithAck(Request.Type.REMOVE, id, machine.clusterSize(), () -> {
+				machine.sendRequest(null, new Request(Request.Type.REMOVE, id));
 			});
 		} catch (Exception e) {
 			LOG.error("Failed multicasting REMOVE request", e);
@@ -2108,32 +1608,12 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 
 	private void sendSubmitRequest(Address mbr, Request req)
 			throws IOException, Exception {
-		var acksReqd = mbr == null ? clusterSize : 1;
-		acks.runWithAck(Request.Type.SUBMIT, req.id(), acksReqd, () -> {
-			sendRequest(mbr, req);
+		var acksReqd = mbr == null ? machine.clusterSize() : 1;
+		machine.acks().runWithAck(Request.Type.SUBMIT, req.id(), acksReqd, () -> {
+			machine.sendRequest(mbr, req);
 		});
 	}
 
-	void sendRequest(Address recipient, Request repreq) {
-		try {
-			if(LOG.isDebugEnabled()) {
-				LOG.debug("Sending request: {} to {}", repreq.type(), recipient == null ? "ALL" : recipient);
-			}
-			
-			srlzr.set(payloadSerializer);
-			var buf = Util.streamableToByteBuffer(repreq);
-			ch.send(new BytesMessage(recipient, buf));
-		} catch (RuntimeException re) {
-			throw re;
-		} catch (IOException ioe) {
-			throw new UncheckedIOException(ioe);
-		} catch (Exception e) {
-			throw new IllegalStateException(e);
-		} finally {
-			srlzr.remove();
-		}
-	}
-	
 	private boolean shouldRun(TaskEntry entry) {
 		var run = false;
 		if (entry.spec.schedule() == Schedule.NOW) {
@@ -2152,7 +1632,8 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				run = true;
 				break;
 			case ANY:
-				int index = entry.id.getId() % clusterSize;
+				int index = entry.id.getId() % machine.clusterSize();
+				int rank = machine.rank();
 				run = index == rank;
 				if (run) {
 					if(LOG.isDebugEnabled()) {
@@ -2177,7 +1658,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				run = true;
 				break;
 			case THIS:
-				if (!getMemberList().contains(entry.submitter) && leader()) {
+				if (!machine.getMemberList().contains(entry.submitter) && machine.leader()) {
 					if(LOG.isDebugEnabled()) {
 						LOG.debug(
 								"Running immediate task {} [{}] on this node because its affinity is {} and the node it was scheduled on is not active and we are leader",
@@ -2185,7 +1666,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 					}
 					run = true;
 				}
-				else if (entry.submitter.equals(ch.getAddress().toString())) {
+				else if (entry.submitter.equals(machine.address().toString())) {
 					if(LOG.isDebugEnabled()) {
 						LOG.debug(
 								"Running immediate task {} [{}] on this node because its affinity is {} and this is the node it was scheduled on",
@@ -2201,7 +1682,7 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 				}
 				break;
 			case ONLY_THIS:
-				if (entry.submitter.equals(ch.getAddress().toString())) {
+				if (entry.submitter.equals(machine.address().toString())) {
 					if(LOG.isDebugEnabled()) {
 						LOG.debug(
 								"Running immediate task {} [{}] on this node because its affinity is {} and this is the node it was scheduled on",
@@ -2233,9 +1714,6 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 		return run;
 	}
 
-	private List<String> getMemberList() {
-		return ch.getView().getMembers().stream().map(Address::toString).toList();
-	}
 	@SuppressWarnings("unchecked")
 	private <T> Future<T> submitLocal(ClusterID id, TaskSpec spec, LocalHandler<?> handler) {
 		synchronized(taskInfo) {
@@ -2266,15 +1744,6 @@ public final class DistributedScheduledExecutor implements ScheduledExecutorServ
 			taskInfo.put(id, new TaskInfo(spec, now, fut, taskInfo.get(id)));
 			
 			return fut;
-		}
-	}
-	
-	private int expectedResults(Affinity affinity) {
-		switch(affinity) {
-		case ALL:
-			return clusterSize;
-		default:
-			return 1;
 		}
 	}
 }

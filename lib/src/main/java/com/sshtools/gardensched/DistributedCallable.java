@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright © 2025 JAdaptive Limited (support@jadaptive.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,15 +47,15 @@ public interface DistributedCallable<RESULT extends Serializable> extends Callab
 		@Override
 		public void writeTo(DataOutput out) throws IOException {
 			super.writeTo(out);
-			DistributedScheduledExecutor.currentSerializer().serialize(task, out);
+			DistributedMachine.currentSerializer().serialize(task, out);
 		}
 
 		@SuppressWarnings("unchecked")
 		@Override
 		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
 			super.readFrom(in);
-			task = (SerializableCallable<RESULT>) DistributedScheduledExecutor.currentSerializer().deserialize(SerializableCallable.class, in);
-			task = (SerializableCallable<RESULT>) DistributedScheduledExecutor.currentFilter().filter(task);
+			task = (SerializableCallable<RESULT>) DistributedMachine.currentSerializer().deserialize(SerializableCallable.class, in);
+			task = (SerializableCallable<RESULT>) DistributedMachine.currentFilter().filter(task);
 		}
 
 		@Override

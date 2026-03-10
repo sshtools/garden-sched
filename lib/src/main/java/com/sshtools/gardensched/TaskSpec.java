@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright © 2025 JAdaptive Limited (support@jadaptive.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,7 +76,7 @@ public class TaskSpec implements Streamable {
 		out.writeInt(unit.ordinal());
 		out.writeLong(submitted.toEpochMilli());
 
-		DistributedScheduledExecutor.currentSerializer().serialize(trigger, out);
+		DistributedMachine.currentSerializer().serialize(trigger, out);
 
 	}
 
@@ -88,8 +88,8 @@ public class TaskSpec implements Streamable {
 		unit = TimeUnit.values()[in.readInt()];
 		submitted = Instant.ofEpochMilli(in.readLong());
 
-		trigger = (TaskTrigger) DistributedScheduledExecutor.currentSerializer().deserialize(TaskTrigger.class, in);
-		trigger = (TaskTrigger) DistributedScheduledExecutor.currentFilter().filter(trigger);
+		trigger = (TaskTrigger) DistributedMachine.currentSerializer().deserialize(TaskTrigger.class, in);
+		trigger = (TaskTrigger) DistributedMachine.currentFilter().filter(trigger);
 	}
 
 	@Override

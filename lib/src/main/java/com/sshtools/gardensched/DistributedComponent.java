@@ -15,25 +15,23 @@
  */
 package com.sshtools.gardensched;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
+import java.io.Closeable;
+import java.util.concurrent.TimeUnit;
 
-public interface SerializableJob extends SerializableRunnable {
+import org.jgroups.Address;
 
-	default void run() {
-		try {
-			execute();
-		}
-		catch(IOException ioe) {
-			throw new UncheckedIOException(ioe);
-		}
-		catch(RuntimeException re) {
-			throw re;
-		}
-		catch(Exception e) {
-			throw new IllegalStateException(e.getMessage() == null ? "Job failed." : e.getMessage(), e);
-		}
-	}
+public interface DistributedComponent extends Closeable {
+
+	void prepareClose();
+
+	@Override
+	void close();
+
+	void forceClose();
+
+	boolean awaitTermination(long millis, TimeUnit milliseconds) throws InterruptedException;
 	
-	void execute() throws Exception;
+	void handleLeftMember(Address mbr);
+
+	void handleNewMember(int wasRank, Address mbr);
 }

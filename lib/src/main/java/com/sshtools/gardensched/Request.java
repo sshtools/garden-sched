@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright © 2025 JAdaptive Limited (support@jadaptive.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,13 +56,13 @@ public class Request implements Streamable {
 
 		@Override
 		public void writeTo(DataOutput out) throws IOException {
-			DistributedScheduledExecutor.currentSerializer().serialize(key, out);
+			DistributedMachine.currentSerializer().serialize(key, out);
 			out.writeUTF(path);
 		}
 
 		@Override
 		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
-			key = DistributedScheduledExecutor.currentSerializer().deserialize(Serializable.class, in);
+			key = DistributedMachine.currentSerializer().deserialize(Serializable.class, in);
 			path = in.readUTF();
 		}
 	}
@@ -95,13 +95,13 @@ public class Request implements Streamable {
 		@Override
 		public void writeTo(DataOutput out) throws IOException {
 			out.writeUTF(type.name());
-			DistributedScheduledExecutor.currentSerializer().serialize(result, out);
+			DistributedMachine.currentSerializer().serialize(result, out);
 		}
 
 		@Override
 		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
 			type = Type.valueOf(in.readUTF());
-			result = DistributedScheduledExecutor.currentSerializer().deserialize(Serializable.class, in);
+			result = DistributedMachine.currentSerializer().deserialize(Serializable.class, in);
 		}
 	}
 	
@@ -122,12 +122,12 @@ public class Request implements Streamable {
 
 		@Override
 		public void writeTo(DataOutput out) throws IOException {
-			DistributedScheduledExecutor.currentSerializer().serialize(result, out);
+			DistributedMachine.currentSerializer().serialize(result, out);
 		}
 
 		@Override
 		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
-			result = DistributedScheduledExecutor.currentSerializer().deserialize(Serializable.class, in);
+			result = DistributedMachine.currentSerializer().deserialize(Serializable.class, in);
 		}
 	}
 
@@ -356,12 +356,12 @@ public class Request implements Streamable {
 
 		@Override
 		public void writeTo(DataOutput out) throws IOException {
-			DistributedScheduledExecutor.currentSerializer().serialize(event, out);
+			DistributedMachine.currentSerializer().serialize(event, out);
 		}
 
 		@Override
 		public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
-			event = DistributedScheduledExecutor.currentSerializer().deserialize(Serializable.class, in);
+			event = DistributedMachine.currentSerializer().deserialize(Serializable.class, in);
 		}
 		
 		public  Serializable event() {

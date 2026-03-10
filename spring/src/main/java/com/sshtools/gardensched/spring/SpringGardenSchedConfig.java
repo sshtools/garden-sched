@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright © 2025 JAdaptive Limited (support@jadaptive.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +32,9 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
+import com.sshtools.gardensched.DistributedEvents;
+import com.sshtools.gardensched.DistributedMachine;
+import com.sshtools.gardensched.DistributedObjectStore;
 import com.sshtools.gardensched.DistributedScheduledExecutor;
 import com.sshtools.gardensched.ObjectStore;
 import com.sshtools.gardensched.PayloadFilter;
@@ -77,14 +80,30 @@ public class SpringGardenSchedConfig {
 	}
 
 	@Bean
-	public DistributedScheduledExecutor distributedScheduledExecutor(PayloadSerializer payloadSerializer, PayloadFilter payloadFilter) throws Exception {
-		return new DistributedScheduledExecutor.Builder().
+	public DistributedMachine distributedMachine(PayloadSerializer payloadSerializer, PayloadFilter payloadFilter) throws Exception {
+		return new DistributedMachine.Builder().
 				withPayloadSerializer(payloadSerializer).
 				withPayloadFilter(payloadFilter).
-				withAlwaysDistribute().
-				withObjectStore(ObjectStore.basicMap()).
 				withCloseTimeout(Duration.ofSeconds(1)).
 				withAcknowledgeTimeout(Duration.ofMinutes(30)). // Helps debugging
 				build();
+	}
+
+	@Bean
+	public DistributedScheduledExecutor distributedScheduledExecutor(DistributedMachine machine) throws Exception {
+		return new DistributedScheduledExecutor.Builder(machine).
+				withAlwaysDistribute().
+				build();
+	}
+
+	@Bean
+	public DistributedObjectStore distributedObjectStore(DistributedMachine machine) throws Exception {
+		return new DistributedObjectStore.Builder(machine, ObjectStore.basicMap()).
+				build();
+	}
+
+	@Bean
+	public DistributedEvents distributedEvents(DistributedMachine machine) throws Exception {
+		return new DistributedEvents(machine);
 	}
 }

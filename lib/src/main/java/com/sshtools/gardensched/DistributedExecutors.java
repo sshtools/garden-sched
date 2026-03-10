@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright © 2025 JAdaptive Limited (support@jadaptive.com)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,7 +23,19 @@ public class DistributedExecutors {
 
 	public static ScheduledExecutorService newExecutorService() {
 		try {
-			return new DistributedScheduledExecutor.Builder().build();
+			return newExecutorService(new DistributedMachine.Builder().build());
+		} catch (RuntimeException re) {
+			throw re;
+		} catch (IOException re) {
+			throw new UncheckedIOException(re);
+		} catch (Exception e) {
+			throw new IllegalStateException(e);
+		}
+	}
+
+	public static ScheduledExecutorService newExecutorService(DistributedMachine machine) {
+		try {
+			return new DistributedScheduledExecutor.Builder(machine).build();
 		} catch (RuntimeException re) {
 			throw re;
 		} catch (IOException re) {
